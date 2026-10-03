@@ -901,7 +901,7 @@
     skyFlash = Math.min(1.2, skyFlash + 0.9)
     const orient = recipe.layers.some(layer => layer.shape === 'ring' || layer.shape === 'fan') ? randomFrame() : null
     recipe.layers.forEach(layer => burstLayer(p.x, p.y, p.z, v.x, v.y, v.z, layer, orient))
-    if (!senrin) spawnBurstSmoke(p.x, p.y, p.z, bloom, shellSmokeColor(recipe))
+    if (!senrin) spawnBurstSmoke(p.x, p.y, p.z, bloom)
     queueSound(p.x, p.y, p.z, 'bloom', bloom, bloomClip(recipe))
     const gauge = GAUGES[recipe.gauge]
     if (autoOn && gauge && gauge.height >= 250 && fanCooldown <= 0 && !fanQueue && Math.random() < 0.62) {
@@ -910,19 +910,6 @@
     if (elapsed >= bannerUntil) {
       labelEl.textContent = recipe.name + '  ' + GAUGES[recipe.gauge].label
     }
-  }
-
-  function shellSmokeColor(recipe) {
-    let color = null
-    let count = -1
-    recipe.layers.forEach(layer => {
-      const n = layer.count || 0
-      if (layer.color && n >= count) {
-        color = layer.color
-        count = n
-      }
-    })
-    return color
   }
 
   function recipeWeight(recipe) {
@@ -1351,12 +1338,11 @@
     return s
   }
 
-  function spawnShapeSmoke(x, y, z, vx, vy, vz, layer, tint) {
+  function spawnShapeSmoke(x, y, z, vx, vy, vz, layer) {
     const speed = Math.hypot(vx, vy, vz) || 1
     const reach = travelRadius(speed, layer.friction, bloomTime(layer))
     const puff = Math.min(reach * 0.08, 12)
     const placed = Math.max(0, reach - puff) * (0.55 + Math.random() * 0.45)
-    const hue = tint || layer.color
     spawnSmokePuff(
       x + (vx / speed) * placed,
       y + (vy / speed) * placed,
@@ -1367,12 +1353,11 @@
       26 + Math.random() * 10,
       puff * (0.8 + Math.random() * 0.3),
       0.06 + Math.random() * 0.02,
-      layer.life * 0.08,
-      hue
+      layer.life * 0.08
     )
   }
 
-  function spawnBurstSmoke(x, y, z, bloom, tint) {
+  function spawnBurstSmoke(x, y, z, bloom) {
     const reach = Math.max(12, bloom || 40)
     for (let i = 0; i < 22; i++) {
       const dir = onSphere()
@@ -1388,8 +1373,7 @@
         22 + Math.random() * 8,
         puff,
         0.055,
-        0.08,
-        tint
+        0.08
       )
     }
   }
@@ -1458,7 +1442,7 @@
         ribbon: true,
         head: true
       })
-      if (i === 0) spawnShapeSmoke(p.x, p.y, p.z, vx, vy, vz, spec, color)
+      if (i === 0) spawnShapeSmoke(p.x, p.y, p.z, vx, vy, vz, spec)
     }
   }
 
@@ -1995,20 +1979,21 @@
         s.smokeAcc += dt
         if (s.smokeAcc > 0.88) {
           s.smokeAcc = 0
-          const p = at(s, s.age)
-          spawnSmokePuff(
-            p.x, p.y, p.z,
-            (Math.random() - 0.5) * 0.5,
-            (Math.random() - 0.5) * 0.3,
-            (Math.random() - 0.5) * 0.5,
-            16 + Math.random() * 6,
-            8 + Math.random() * 5,
-            0.22,
-            0.02,
-            [s.r, s.g, s.b],
-            0.4,
-            0.35
-          )
+          if (Math.random() < 1 / 3) {
+            const p = at(s, s.age)
+            spawnSmokePuff(
+              p.x, p.y, p.z,
+              (Math.random() - 0.5) * 0.5,
+              (Math.random() - 0.5) * 0.3,
+              (Math.random() - 0.5) * 0.5,
+              16 + Math.random() * 6,
+              8 + Math.random() * 5,
+              0.22,
+              0.02,
+              null,
+              0.4
+            )
+          }
         }
         if (s.age >= s.life || (s.age > 0.45 && sp < 8)) {
           beginFade(s)
