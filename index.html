@@ -2089,7 +2089,10 @@
         const cg = s.g * (1 - hotK) + hotK * 0.94
         const cb = s.b * (1 - hotK) + hotK * 0.75
         const base = verts
-        const t0 = Math.max(0, shown - s.trail)
+        const history = s.trail > 1.2
+          ? Math.min(s.trail, 1.15 + Math.min(0.5, (s.trail - 1.2) * 0.15))
+          : s.trail
+        const t0 = Math.max(0, shown - history)
         const span = Math.max(0.02, shown - t0)
         let prevX = 0
         let prevY = 0
