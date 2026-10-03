@@ -23,6 +23,62 @@
     pointer-events: none;
     text-shadow: 0 1px 8px rgba(0, 0, 0, 0.85);
   }
+  #bar {
+    position: fixed;
+    top: 14px;
+    left: 14px;
+    z-index: 2;
+    display: flex;
+    gap: 6px;
+    align-items: center;
+  }
+  #bar button, #bar select {
+    appearance: none;
+    background: rgba(8, 8, 14, 0.42);
+    color: rgba(255, 232, 206, 0.9);
+    border: 1px solid rgba(255, 214, 170, 0.28);
+    border-radius: 3px;
+    padding: 4px 8px;
+    font: 12px/1.4 "Hiragino Sans", "Yu Gothic", sans-serif;
+    letter-spacing: 0.04em;
+  }
+  #bar select { max-width: 9.5em; }
+  #volume {
+    width: 46px;
+    height: 10px;
+    margin: 0 2px;
+    padding: 0;
+    background: transparent;
+    appearance: none;
+    cursor: pointer;
+  }
+  #volume::-webkit-slider-runnable-track {
+    height: 1px;
+    background: rgba(255, 236, 214, 0.22);
+  }
+  #volume::-webkit-slider-thumb {
+    appearance: none;
+    width: 5px;
+    height: 5px;
+    margin-top: -2px;
+    border: 0;
+    border-radius: 50%;
+    background: rgba(255, 236, 214, 0.45);
+  }
+  #volume::-moz-range-track {
+    height: 1px;
+    background: rgba(255, 236, 214, 0.22);
+    border: 0;
+  }
+  #volume::-moz-range-thumb {
+    width: 5px;
+    height: 5px;
+    border: 0;
+    border-radius: 50%;
+    background: rgba(255, 236, 214, 0.45);
+  }
+  #manual { display: none; gap: 6px; align-items: center; }
+  #manual.on { display: flex; }
   #label {
     display: block;
     min-height: 1.4em;
@@ -31,7 +87,17 @@
 </style>
 </head>
 <body>
-<p class="hud"><span id="label"></span>画面をクリックすると、その位置から打ち上がります</p>
+<div id="bar">
+  <button id="auto-toggle" type="button">自動停止</button>
+  <button id="sound-toggle" type="button">ミュート解除</button>
+  <input id="volume" type="range" min="0" max="100" value="70" aria-label="音量">
+  <span id="manual">
+    <select id="recipe" aria-label="花火の種類"></select>
+    <button id="fire" type="button">打ち上げ</button>
+  </span>
+</div>
+<p class="hud"><span id="label"></span><span id="hint">画面をクリックすると、その位置から打ち上がります</span></p>
+<script src="sounds-data.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.160.1/build/three.min.js"></script>
 <script>
 /**
@@ -43,59 +109,311 @@
  * https://github.com/tompng/senkouhanabi_gl
  */
 (function () {
-  const MAX = 4096
+  const MAX = 8192
   const GRAVITY = -9.8
+
+  function crownRecipe(gauge, count) {
+    return {
+      name: '冠菊',
+      gauge,
+      flash: [1, 0.72, 0.42],
+      layers: [
+        { shape: 'sphere', count: Math.max(36, Math.round(count * 0.12)), speed: 28, jitter: 0.05, friction: 2.6, life: 1.85, fadeDur: 0.6, trail: 0, headSize: 4.6, color: [1, 0.96, 0.84], radius: 0.32, bright: 1.6, hot: 0.6, crackle: 0 },
+        { shape: 'sphere', count, speed: 62, jitter: 0.04, friction: 1.75, life: 3.1, fadeDur: 0.95, trail: 0.72, color: [1, 0.62, 0.16], crown: [1, 0.1, 0.14], radius: 0.34, bright: 1.1, hot: 0.42, crackle: 0.05 }
+      ]
+    }
+  }
 
   const RECIPES = [
     {
       name: '金菊',
+      gauge: 10,
       flash: [1, 0.96, 0.82],
       layers: [
-        { shape: 'sphere', count: 220, speed: 62, jitter: 0.06, friction: 1.6, life: 1.15, fadeDur: 0.35, color: [1, 0.58, 0.16], radius: 0.42, bright: 1.15, hot: 0.95, crackle: 0.22 }
+        { shape: 'sphere', count: 380, speed: 62, jitter: 0.06, friction: 1.85, life: 2.88, fadeDur: 0.88, trail: 0.62, color: [1, 0.58, 0.16], radius: 0.42, bright: 1.15, hot: 0.55, crackle: 0.22 }
       ]
     },
     {
       name: '赤牡丹',
+      gauge: 6,
       flash: [1, 0.9, 0.82],
       layers: [
-        { shape: 'ball', count: 190, speed: 58, jitter: 0.12, friction: 2.4, life: 0.75, fadeDur: 0.28, color: [1, 0.18, 0.22], radius: 0.5, bright: 1.25, hot: 0.8, crackle: 0 }
+        { shape: 'ball', count: 320, speed: 58, jitter: 0.12, friction: 2.8, life: 1.88, fadeDur: 0.7, trail: 0, headSize: 6.4, color: [1, 0.1, 0.14], radius: 0.5, bright: 1.7, hot: 0.55, crackle: 0 }
       ]
     },
     {
       name: '柳',
+      gauge: 10,
       flash: [0.95, 1, 0.7],
       layers: [
-        { shape: 'sphere', count: 90, speed: 24, jitter: 0.12, friction: 0.26, life: 4.4, fadeDur: 1.15, color: [0.78, 0.92, 0.38], radius: 0.28, bright: 0.95, hot: 0.2, crackle: 0 }
+        { shape: 'sphere', count: 160, speed: 24, jitter: 0.12, friction: 0.72, life: 11, fadeDur: 2.9, trail: 3.4, color: [0.78, 0.92, 0.38], radius: 0.28, bright: 0.95, hot: 0.15, crackle: 0 }
       ]
     },
     {
       name: '二段咲き',
+      gauge: 8,
       flash: [1, 0.95, 0.78],
       layers: [
         {
-          shape: 'sphere', count: 80, speed: 50, jitter: 0.06, friction: 1.5, life: 0.65, fadeDur: 0.25,
-          color: [1, 0.72, 0.32], radius: 0.4, bright: 1.15, hot: 0.9, crackle: 0,
-          nidan: { count: 8, speed: 36, friction: 1.9, life: 0.85, color: [1, 0.32, 0.2], radius: 0.32, bright: 1.1, hot: 0.75, fadeDur: 0.3 }
+          shape: 'sphere', count: 80, speed: 50, jitter: 0.06, friction: 1.75, life: 1.63, fadeDur: 0.63, trail: 0.45,
+          color: [1, 0.72, 0.32], radius: 0.4, bright: 1.15, hot: 0.5, crackle: 0,
+          nidan: { count: 8, speed: 36, friction: 2.2, life: 2.13, trail: 0, headSize: 5.2, color: [1, 0.22, 0.12], radius: 0.32, bright: 1.55, hot: 0.5, fadeDur: 0.75 }
         }
       ]
     },
     {
       name: '芯入り',
+      gauge: 10,
       flash: [1, 0.94, 0.88],
       layers: [
-        { shape: 'sphere', count: 48, speed: 32, jitter: 0.05, friction: 2.6, life: 0.62, fadeDur: 0.22, color: [1, 0.96, 0.9], radius: 0.36, bright: 1.45, hot: 1, crackle: 0 },
-        { shape: 'sphere', count: 180, speed: 66, jitter: 0.05, friction: 1.55, life: 1.05, fadeDur: 0.32, color: [1, 0.28, 0.48], radius: 0.4, bright: 1.1, hot: 0.85, crackle: 0.12 }
+        { shape: 'sphere', count: 80, speed: 32, jitter: 0.05, friction: 3.0, life: 1.55, fadeDur: 0.55, trail: 0, headSize: 4.8, color: [1, 0.96, 0.86], radius: 0.36, bright: 1.7, hot: 0.7, crackle: 0 },
+        { shape: 'sphere', count: 320, speed: 66, jitter: 0.05, friction: 1.8, life: 2.63, fadeDur: 0.8, trail: 0.55, color: [1, 0.28, 0.48], radius: 0.4, bright: 1.1, hot: 0.5, crackle: 0.12 }
       ]
     },
     {
       name: '緑冠',
+      gauge: 8,
       flash: [0.85, 1, 0.85],
       layers: [
-        { shape: 'sphere', count: 160, speed: 60, jitter: 0.07, friction: 1.7, life: 1.05, fadeDur: 0.32, color: [0.32, 1, 0.52], radius: 0.4, bright: 1.15, hot: 0.75, crackle: 0.1 },
-        { shape: 'sphere', count: 40, speed: 28, jitter: 0.08, friction: 2.2, life: 0.7, fadeDur: 0.25, color: [0.8, 1, 0.55], radius: 0.3, bright: 0.9, hot: 0.4, crackle: 0 }
+        { shape: 'sphere', count: 280, speed: 60, jitter: 0.07, friction: 2.0, life: 2.63, fadeDur: 0.8, trail: 0.48, color: [0.32, 1, 0.52], radius: 0.4, bright: 1.15, hot: 0.45, crackle: 0.1 },
+        { shape: 'sphere', count: 40, speed: 28, jitter: 0.08, friction: 2.6, life: 1.75, fadeDur: 0.63, trail: 0, headSize: 4.4, color: [0.32, 1, 0.28], radius: 0.3, bright: 1.45, hot: 0.25, crackle: 0 }
       ]
-    }
+    },
+    {
+      name: '銀菊',
+      gauge: 10,
+      flash: [0.95, 0.97, 1],
+      layers: [
+        { shape: 'sphere', count: 340, speed: 64, jitter: 0.05, friction: 1.9, life: 2.75, fadeDur: 0.8, trail: 0.52, color: [0.82, 0.9, 1], radius: 0.36, bright: 1.2, hot: 0.5, crackle: 0.08 }
+      ]
+    },
+    {
+      name: '青牡丹',
+      gauge: 6,
+      flash: [0.75, 0.88, 1],
+      layers: [
+        { shape: 'ball', count: 300, speed: 54, jitter: 0.14, friction: 2.9, life: 1.8, fadeDur: 0.65, trail: 0, headSize: 6.4, color: [0.18, 0.38, 1], radius: 0.48, bright: 1.75, hot: 0.45, crackle: 0 }
+      ]
+    },
+    {
+      name: '輪菊',
+      gauge: 8,
+      flash: [1, 0.86, 0.55],
+      layers: [
+        { shape: 'ring', count: 280, speed: 58, jitter: 0.04, friction: 2.15, life: 2.5, fadeDur: 0.75, trail: 0.42, color: [1, 0.72, 0.28], radius: 0.34, bright: 1.15, hot: 0.45, crackle: 0 }
+      ]
+    },
+    {
+      name: '孔雀',
+      gauge: 6,
+      flash: [0.7, 1, 0.75],
+      layers: [
+        { shape: 'fan', count: 140, speed: 46, jitter: 0.1, friction: 1.45, life: 3.9, fadeDur: 1.13, trail: 1.5, color: [0.25, 0.95, 0.55], radius: 0.32, bright: 1.05, hot: 0.3, crackle: 0 },
+        { shape: 'fan', count: 50, speed: 28, jitter: 0.08, friction: 1.7, life: 4.25, fadeDur: 1.0, trail: 1.7, color: [0.95, 0.85, 0.35], radius: 0.26, bright: 0.9, hot: 0.25, crackle: 0 }
+      ]
+    },
+    {
+      name: '錦',
+      gauge: 8,
+      flash: [1, 0.9, 0.7],
+      layers: [
+        { shape: 'sphere', count: 70, speed: 64, jitter: 0.06, friction: 1.85, life: 2.63, fadeDur: 0.75, trail: 0.45, color: [1, 0.55, 0.12], radius: 0.38, bright: 1.1, hot: 0.45, crackle: 0 },
+        { shape: 'sphere', count: 70, speed: 52, jitter: 0.06, friction: 2.0, life: 2.5, fadeDur: 0.75, trail: 0, headSize: 5.6, color: [1, 0.14, 0.28], radius: 0.36, bright: 1.6, hot: 0.45, crackle: 0 },
+        { shape: 'sphere', count: 60, speed: 40, jitter: 0.06, friction: 2.15, life: 2.38, fadeDur: 0.7, trail: 0.4, color: [0.35, 0.9, 0.55], radius: 0.34, bright: 1.05, hot: 0.4, crackle: 0 }
+      ]
+    },
+    {
+      name: '三段咲き',
+      gauge: 8,
+      flash: [1, 0.95, 0.8],
+      layers: [
+        {
+          shape: 'sphere', count: 42, speed: 46, jitter: 0.05, friction: 1.7, life: 1.38, fadeDur: 0.5, trail: 0.32,
+          color: [1, 0.78, 0.3], radius: 0.36, bright: 1.1, hot: 0.45, crackle: 0,
+          nidan: {
+            count: 5, speed: 28, friction: 2.0, life: 1.25, trail: 0, headSize: 4.6, color: [1, 0.24, 0.28], radius: 0.28, bright: 1.5, hot: 0.45, fadeDur: 0.55,
+            nidan: { count: 4, speed: 16, friction: 2.5, life: 1.38, trail: 0, headSize: 4.2, color: [0.86, 0.94, 1], radius: 0.22, bright: 1.55, hot: 0.55, fadeDur: 0.5 }
+          }
+        }
+      ]
+    },
+    {
+      name: 'ニコちゃん',
+      gauge: 5,
+      flash: [1, 0.95, 0.7],
+      layers: [
+        { shape: 'pattern', pattern: 'smile', speed: 52, jitter: 0.012, friction: 3.1, life: 3.1, fadeDur: 1.0, color: [1, 0.78, 0.22], radius: 0.32, bright: 1.2, hot: 0.35, crackle: 0 }
+      ]
+    },
+    {
+      name: '土星',
+      gauge: 5,
+      flash: [1, 0.9, 0.55],
+      layers: [
+        { shape: 'pattern', pattern: 'saturn', speed: 50, jitter: 0.015, friction: 3.0, life: 3.25, fadeDur: 1.05, color: [1, 0.72, 0.28], radius: 0.34, bright: 1.15, hot: 0.4, crackle: 0 }
+      ]
+    },
+    {
+      name: 'ハート',
+      gauge: 5,
+      flash: [1, 0.7, 0.75],
+      layers: [
+        { shape: 'pattern', pattern: 'heart', speed: 50, jitter: 0.012, friction: 3.05, life: 3.0, fadeDur: 1.0, color: [1, 0.28, 0.42], radius: 0.32, bright: 1.2, hot: 0.35, crackle: 0 }
+      ]
+    },
+    {
+      name: '星',
+      gauge: 5,
+      flash: [1, 0.95, 0.6],
+      layers: [
+        { shape: 'pattern', pattern: 'star', speed: 54, jitter: 0.01, friction: 3.0, life: 3.0, fadeDur: 0.95, color: [1, 0.84, 0.25], radius: 0.3, bright: 1.25, hot: 0.4, crackle: 0 }
+      ]
+    },
+    {
+      name: '二重輪',
+      gauge: 5,
+      flash: [0.85, 0.95, 1],
+      layers: [
+        { shape: 'pattern', pattern: 'rings', speed: 56, jitter: 0.01, friction: 2.9, life: 2.88, fadeDur: 0.9, color: [0.55, 0.85, 1], radius: 0.3, bright: 1.15, hot: 0.45, crackle: 0 }
+      ]
+    },
+    {
+      name: '尺玉',
+      gauge: 10,
+      flash: [1, 0.78, 0.42],
+      layers: [
+        { shape: 'sphere', count: 120, speed: 30, jitter: 0.05, friction: 2.6, life: 2.0, fadeDur: 0.7, trail: 0, headSize: 5.0, color: [1, 0.96, 0.84], radius: 0.4, bright: 1.75, hot: 0.65, crackle: 0 },
+        { shape: 'sphere', count: 520, speed: 66, jitter: 0.045, friction: 1.7, life: 3.25, fadeDur: 1.05, trail: 0.85, color: [1, 0.38, 0.08], radius: 0.42, bright: 1.15, hot: 0.5, crackle: 0.08 }
+      ]
+    },
+    {
+      name: '金小菊',
+      gauge: 4,
+      flash: [1, 0.9, 0.55],
+      layers: [
+        { shape: 'sphere', count: 110, speed: 58, jitter: 0.06, friction: 2.05, life: 2.4, fadeDur: 0.75, trail: 0.42, color: [1, 0.62, 0.16], radius: 0.34, bright: 1.1, hot: 0.45, crackle: 0 }
+      ]
+    },
+    {
+      name: '赤小菊',
+      gauge: 4,
+      flash: [1, 0.7, 0.55],
+      layers: [
+        { shape: 'sphere', count: 110, speed: 58, jitter: 0.06, friction: 2.05, life: 2.4, fadeDur: 0.75, trail: 0.42, color: [1, 0.2, 0.24], radius: 0.34, bright: 1.12, hot: 0.5, crackle: 0 }
+      ]
+    },
+    {
+      name: '緑小菊',
+      gauge: 4,
+      flash: [0.75, 1, 0.7],
+      layers: [
+        { shape: 'sphere', count: 110, speed: 58, jitter: 0.06, friction: 2.05, life: 2.4, fadeDur: 0.75, trail: 0.42, color: [0.28, 1, 0.48], radius: 0.34, bright: 1.1, hot: 0.45, crackle: 0 }
+      ]
+    },
+    {
+      name: '銀小菊',
+      gauge: 4,
+      flash: [0.9, 0.94, 1],
+      layers: [
+        { shape: 'sphere', count: 110, speed: 58, jitter: 0.06, friction: 2.05, life: 2.4, fadeDur: 0.75, trail: 0.42, color: [0.78, 0.88, 1], radius: 0.34, bright: 1.12, hot: 0.5, crackle: 0 }
+      ]
+    },
+    {
+      name: '菊',
+      gauge: 2,
+      flash: [1, 0.9, 0.55],
+      layers: [
+        { shape: 'sphere', count: 64, speed: 52, jitter: 0.07, friction: 2.15, life: 2.1, fadeDur: 0.65, trail: 0.36, color: [1, 0.62, 0.16], radius: 0.3, bright: 1.1, hot: 0.45, crackle: 0 }
+      ]
+    },
+    {
+      name: '牡丹',
+      gauge: 3,
+      flash: [1, 0.86, 0.78],
+      layers: [
+        { shape: 'ball', count: 140, speed: 50, jitter: 0.12, friction: 2.9, life: 1.7, fadeDur: 0.6, trail: 0, headSize: 5.6, color: [1, 0.16, 0.22], radius: 0.42, bright: 1.65, hot: 0.5, crackle: 0 }
+      ]
+    },
+    {
+      name: '椰子',
+      gauge: 10,
+      flash: [1, 0.84, 0.42],
+      layers: [
+        { shape: 'canopy', count: 96, speed: 26, jitter: 0.1, friction: 0.48, life: 13, fadeDur: 3.2, trail: 4.6, color: [1, 0.66, 0.14], radius: 0.32, bright: 1.02, hot: 0.18, crackle: 0 }
+      ]
+    },
+    {
+      name: '千輪菊',
+      gauge: 15,
+      flash: [1, 0.88, 0.5],
+      layers: [
+        { shape: 'sphere', count: 1100, speed: 64, jitter: 0.035, friction: 1.9, life: 3.15, fadeDur: 0.95, trail: 0.34, color: [1, 0.52, 0.12], radius: 0.26, bright: 1.02, hot: 0.38, crackle: 0.03 }
+      ]
+    },
+    crownRecipe(15, 720),
+    crownRecipe(20, 1000),
+    crownRecipe(30, 1400),
+    crownRecipe(40, 1800)
   ]
+
+
+  // 4〜10号と20号の開発高・開花直径は牛尾煙火製造所の公開値（概数）。
+  // 2号は2.5号（80m / 50m）より一回り小さい概数。15号は10号と20号の中間。
+  // 30号・40号は牛尾の表にないため、到達高と開花径の一般的な目安。
+  // 視点は打上地点から 500m、目の高さ 1.6m。垂直画角 62°（フルサイズ約 20mm）。
+  // 尺玉の中心は仰角約 31°、上端は約 41°。安静時の仰角は約 21°で、下に地面が残る。
+  // 上向きは40号の上端（仰角約 65°）が画面に入るところまで。上げきると地面はフレームから外れる。
+  // カメラの高さは目の位置のままなので、地面の下には潜らない。
+  const GAUGES = {
+    2: { label: '2号', height: 65, diameter: 40 },
+    3: { label: '3号', height: 120, diameter: 100 },
+    4: { label: '4号', height: 150, diameter: 120 },
+    5: { label: '5号', height: 200, diameter: 150 },
+    6: { label: '6号', height: 220, diameter: 180 },
+    8: { label: '8号', height: 280, diameter: 250 },
+    10: { label: '10号', height: 300, diameter: 280 },
+    15: { label: '15号', height: 380, diameter: 360 },
+    20: { label: '20号', height: 450, diameter: 450 },
+    30: { label: '30号', height: 600, diameter: 550 },
+    40: { label: '40号', height: 700, diameter: 700 }
+  }
+  const VIEW = { distance: 500, eye: 1.6, lookY: 194, fov: 62 }
+
+  function travelRadius(speed, friction, life) {
+    const f = Math.max(friction, 0.05)
+    return (speed / f) * (1 - Math.exp(-f * life))
+  }
+
+  function scaleSpeeds(layer, k) {
+    layer.speed *= k
+  }
+
+  function scaleNidan(spec, shellRadius, generation) {
+    const frac = generation === 1 ? 0.2 : 0.1
+    const target = shellRadius * frac
+    const reach = travelRadius(spec.speed, spec.friction, spec.life)
+    spec.speed *= target / Math.max(reach, 0.001)
+    if (spec.nidan) scaleNidan(spec.nidan, shellRadius, generation + 1)
+  }
+
+  function bloomTime(layer) {
+    if (!layer.nidan) return layer.life
+    return layer.life * 0.46 + 0.45
+  }
+
+  RECIPES.forEach(recipe => {
+    const gauge = GAUGES[recipe.gauge]
+    let radius = 1
+    recipe.layers.forEach(layer => {
+      radius = Math.max(radius, travelRadius(layer.speed, layer.friction, bloomTime(layer)))
+    })
+    const k = (gauge.diameter * 0.5) / radius
+    recipe.layers.forEach(layer => {
+      scaleSpeeds(layer, k)
+      if (layer.nidan) scaleNidan(layer.nidan, gauge.diameter * 0.5, 1)
+    })
+    recipe.bloomRadius = gauge.diameter * 0.5
+  })
 
   const wind = { x: 0, y: 0, z: 0 }
 
@@ -145,11 +463,26 @@
 
   const sparks = Array.from({ length: MAX }, () => ({ alive: false }))
 
-  function alloc() {
+  function alloc(kind) {
     for (let i = 0; i < sparks.length; i++) {
       if (!sparks[i].alive) return resetSpark(sparks[i])
     }
-    return null
+    if (kind !== 'flash') return null
+    let best = null
+    let bestScore = 0
+    for (let i = 0; i < sparks.length; i++) {
+      const s = sparks[i]
+      if (!s.alive) continue
+      let score = 0
+      if (s.kind === 'smoke') score = 1000 + s.age
+      else if (s.kind === 'ember') score = 500 + s.age
+      else if (s.fading) score = 100 + s.age
+      if (score > bestScore) {
+        best = s
+        bestScore = score
+      }
+    }
+    return best ? resetSpark(best) : null
   }
 
   function resetSpark(s) {
@@ -179,11 +512,15 @@
     s.radius = 0.2
     s.friction = 0.8
     s.life = 1
+    s.noBurst = false
+    s.fan = false
+    s.fanStar = false
+    s.crown = false
     return s
   }
 
   function spawnSpark(opts) {
-    const s = alloc()
+    const s = alloc(opts.kind)
     if (!s) return null
     s.px = opts.x
     s.py = opts.y
@@ -193,9 +530,24 @@
     s.vz = opts.vz
     s.friction = opts.friction
     s.life = opts.life
+    if ((opts.kind || 'spark') === 'spark' && !opts.fanStar) {
+      const burn = s.life
+      const glitterWas = burn * 0.52
+      const dieWas = burn * 0.28
+      s.life = burn * 0.48 + glitterWas * 2
+      s.glitterAt = (burn * 0.48) / s.life
+      s.endAt = burn * 0.72 + Math.random() * dieWas * 2
+    } else {
+      s.glitterAt = 0.48
+      s.endAt = s.kind === 'spark' ? s.life : 0
+    }
     s.r = opts.color[0]
     s.g = opts.color[1]
     s.b = opts.color[2]
+    s.crown = !!opts.crown
+    s.crownR = opts.crown ? opts.crown[0] : 0
+    s.crownG = opts.crown ? opts.crown[1] : 0
+    s.crownB = opts.crown ? opts.crown[2] : 0
     s.radius = opts.radius
     s.bright = opts.bright
     s.hot = opts.hot
@@ -203,13 +555,15 @@
     s.nidan = opts.nidan || null
     s.fadeDur = opts.fadeDur == null ? 0.9 : opts.fadeDur
     s.kind = opts.kind || 'spark'
-    s.ribbon = opts.ribbon !== false
+    const windScale = s.kind === 'smoke' ? 2.2 : 0.28
+    s.ribbon = opts.ribbon === true
+    s.trail = opts.trail || 0
     s.head = opts.head !== false
     s.headSize = opts.headSize == null ? 2.4 : opts.headSize
     s.recipe = opts.recipe || 0
-    s.wx = wind.x
-    s.wy = wind.y
-    s.wz = wind.z
+    s.wx = wind.x * windScale
+    s.wy = wind.y * windScale
+    s.wz = wind.z * windScale
     return s
   }
 
@@ -218,15 +572,190 @@
     return [color[0] * k, color[1] * k, color[2] * k]
   }
 
-  function burstLayer(x, y, z, pvx, pvy, pvz, layer) {
-    for (let i = 0; i < layer.count; i++) {
-      const dir = layer.shape === 'ball' ? inBall() : onSphere()
-      const speed = layer.speed * (1 + (Math.random() * 2 - 1) * layer.jitter)
+  function circlePoints(cx, cy, radius, count, color) {
+    const pts = []
+    for (let i = 0; i < count; i++) {
+      const th = (i / count) * Math.PI * 2
+      pts.push({ x: cx + Math.cos(th) * radius, y: cy + Math.sin(th) * radius, z: 0, color })
+    }
+    return pts
+  }
+
+  function patternPoints(name) {
+    if (name === 'smile') {
+      const gold = [1, 0.78, 0.22]
+      const white = [1, 0.98, 0.9]
+      const pts = circlePoints(0, 0, 1, 100, gold)
+      for (const side of [-1, 1]) {
+        for (let i = 0; i < 10; i++) {
+          const d = inBall()
+          pts.push({
+            x: side * 0.34 + d.x * 0.09,
+            y: 0.28 + d.y * 0.09,
+            z: d.z * 0.03,
+            color: white,
+            bright: 1.7
+          })
+        }
+      }
+      const mouth = 42
+      const start = Math.PI * 1.15
+      const end = Math.PI * 1.85
+      for (let i = 0; i <= mouth; i++) {
+        const th = start + (end - start) * (i / mouth)
+        pts.push({ x: Math.cos(th) * 0.58, y: Math.sin(th) * 0.58, z: 0, color: white, bright: 1.65 })
+      }
+      return pts
+    }
+    if (name === 'saturn') {
+      const gold = [1, 0.74, 0.22]
+      const ring = [0.85, 0.95, 1]
+      const pts = []
+      for (let i = 0; i < 70; i++) {
+        const d = inBall()
+        pts.push({ x: d.x * 0.4, y: d.y * 0.4, z: d.z * 0.4, color: gold })
+      }
+      const tilt = 1.05
+      const c = Math.cos(tilt)
+      const s = Math.sin(tilt)
+      for (let i = 0; i < 96; i++) {
+        const th = (i / 96) * Math.PI * 2
+        const x = Math.cos(th)
+        const y0 = Math.sin(th)
+        pts.push({ x, y: y0 * c, z: y0 * s, color: ring })
+      }
+      return pts
+    }
+    if (name === 'heart') {
+      const color = [1, 0.28, 0.45]
+      const raw = []
+      let max = 0
+      const count = 110
+      for (let i = 0; i < count; i++) {
+        const t = (i / count) * Math.PI * 2
+        const x = 16 * Math.sin(t) ** 3
+        const y = 13 * Math.cos(t) - 5 * Math.cos(2 * t) - 2 * Math.cos(3 * t) - Math.cos(4 * t)
+        raw.push({ x, y })
+        max = Math.max(max, Math.hypot(x, y))
+      }
+      return raw.map(p => ({ x: p.x / max, y: p.y / max, z: 0, color }))
+    }
+    if (name === 'star') {
+      const color = [1, 0.86, 0.28]
+      const verts = []
+      for (let i = 0; i < 10; i++) {
+        const th = Math.PI / 2 + (i * Math.PI) / 5
+        const r = i % 2 === 0 ? 1 : 0.4
+        verts.push({ x: Math.cos(th) * r, y: Math.sin(th) * r })
+      }
+      const pts = []
+      const steps = 14
+      for (let i = 0; i < 10; i++) {
+        const a = verts[i]
+        const b = verts[(i + 1) % 10]
+        for (let k = 0; k < steps; k++) {
+          const t = k / steps
+          pts.push({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t, z: 0, color })
+        }
+      }
+      return pts
+    }
+    const outer = [1, 0.78, 0.3]
+    const inner = [0.75, 0.95, 1]
+    return [...circlePoints(0, 0, 1, 80, outer), ...circlePoints(0, 0, 0.58, 56, inner)]
+  }
+
+  function burstPattern(x, y, z, pvx, pvy, pvz, layer) {
+    const yaw = Math.random() * Math.PI * 2
+    const pitch = (Math.random() - 0.5) * Math.PI
+    const roll = Math.random() * Math.PI * 2
+    const cy = Math.cos(yaw)
+    const sy = Math.sin(yaw)
+    const cp = Math.cos(pitch)
+    const sp = Math.sin(pitch)
+    const cr = Math.cos(roll)
+    const sr = Math.sin(roll)
+    const turn = (x0, y0, z0) => {
+      const x1 = x0 * cr - y0 * sr
+      const y1 = x0 * sr + y0 * cr
+      const z1 = z0
+      const x2 = x1
+      const y2 = y1 * cp - z1 * sp
+      const z2 = y1 * sp + z1 * cp
+      return {
+        x: x2 * cy + z2 * sy,
+        y: y2,
+        z: -x2 * sy + z2 * cy
+      }
+    }
+    patternPoints(layer.pattern).forEach((pt, index) => {
+      const turned = turn(pt.x, pt.y, pt.z)
+      const len = Math.hypot(turned.x, turned.y, turned.z)
+      if (len < 0.02) return
+      const j = layer.jitter == null ? 0.015 : layer.jitter
+      const speed = layer.speed * len * (1 + (Math.random() * 2 - 1) * j)
+      const color = pt.color || layer.color
+      const k = 0.94 + Math.random() * 0.1
+      const vx = pvx * 0.04 + (turned.x / len) * speed
+      const vy = pvy * 0.04 + (turned.y / len) * speed
+      const vz = pvz * 0.04 + (turned.z / len) * speed
       spawnSpark({
         x, y, z,
-        vx: pvx * 0.22 + dir.x * speed,
-        vy: pvy * 0.22 + dir.y * speed,
-        vz: pvz * 0.22 + dir.z * speed,
+        vx, vy, vz,
+        friction: layer.friction * (0.97 + Math.random() * 0.06),
+        life: layer.life * (0.96 + Math.random() * 0.08),
+        color: [color[0] * k, color[1] * k, color[2] * k],
+        radius: layer.radius,
+        bright: pt.bright || layer.bright,
+        hot: layer.hot,
+        crackle: 0,
+        ribbon: false,
+        trail: 0,
+        head: true,
+        headSize: pt.bright ? 4.4 : 3.6,
+        fadeDur: layer.fadeDur == null ? 0.4 : layer.fadeDur
+      })
+      if (index % 3 === 0) spawnShapeSmoke(x, y, z, vx, vy, vz, layer)
+    })
+  }
+
+  function burstDirection(shape) {
+    if (shape === 'ball') return inBall()
+    if (shape === 'ring') {
+      const th = Math.random() * Math.PI * 2
+      const lift = (Math.random() - 0.5) * 0.16
+      const radial = Math.sqrt(Math.max(0, 1 - lift * lift))
+      return { x: radial * Math.cos(th), y: lift, z: radial * Math.sin(th) }
+    }
+    if (shape === 'fan') {
+      const d = onSphere()
+      d.y = -Math.abs(d.y) * 0.55 - 0.25
+      const len = Math.hypot(d.x, d.y, d.z) || 1
+      return { x: d.x / len, y: d.y / len, z: d.z / len }
+    }
+    if (shape === 'canopy') {
+      const d = onSphere()
+      d.y = Math.abs(d.y) * 0.55 + 0.22
+      const len = Math.hypot(d.x, d.y, d.z) || 1
+      return { x: d.x / len, y: d.y / len, z: d.z / len }
+    }
+    return onSphere()
+  }
+
+  function burstLayer(x, y, z, pvx, pvy, pvz, layer) {
+    if (layer.shape === 'pattern') {
+      burstPattern(x, y, z, pvx, pvy, pvz, layer)
+      return
+    }
+    for (let i = 0; i < layer.count; i++) {
+      const dir = burstDirection(layer.shape)
+      const speed = layer.speed * (1 + (Math.random() * 2 - 1) * layer.jitter)
+      const vx = pvx * 0.22 + dir.x * speed
+      const vy = pvy * 0.22 + dir.y * speed
+      const vz = pvz * 0.22 + dir.z * speed
+      spawnSpark({
+        x, y, z,
+        vx, vy, vz,
         friction: layer.friction * (0.9 + Math.random() * 0.2),
         life: layer.life * (0.88 + Math.random() * 0.24),
         color: tint(layer.color),
@@ -235,8 +764,13 @@
         hot: layer.hot,
         crackle: layer.crackle || 0,
         nidan: layer.nidan || null,
-        fadeDur: layer.fadeDur == null ? 0.4 : layer.fadeDur
+        fadeDur: layer.fadeDur == null ? 0.4 : layer.fadeDur,
+        trail: layer.trail || 0,
+        ribbon: (layer.trail || 0) > 0,
+        headSize: layer.headSize,
+        crown: layer.crown || null
       })
+      if (i % 3 === 0) spawnShapeSmoke(x, y, z, vx, vy, vz, layer)
     }
   }
 
@@ -246,98 +780,498 @@
     labelEl.textContent = event.message || '描画を開始できませんでした'
   })
 
+  function bloomClip(recipe) {
+    if (recipe.layers.some(layer => layer.nidan)) return 'decor'
+    if ((GAUGES[recipe.gauge].height || 0) >= 300) return 'cannon'
+    return 'bloom'
+  }
+
   function explode(shell) {
     const age = Math.min(shell.age, shell.life)
     const p = at(shell, age)
     const v = vel(shell, age)
     const recipe = RECIPES[shell.recipe]
-    recipe.layers.forEach(layer => burstLayer(p.x, p.y, p.z, v.x, v.y, v.z, layer))
+    const shaped = recipe.layers.some(layer => layer.shape === 'pattern')
+    const flashK = shaped ? 0.62 : 1
+    const bloom = recipe.bloomRadius || 40
     spawnSpark({
       x: p.x, y: p.y, z: p.z, vx: v.x, vy: v.y, vz: v.z,
-      friction: 0.2, life: 0.12, color: [1, 0.98, 0.94], radius: 34, bright: 1.6,
-      hot: 1, kind: 'flash', ribbon: false, head: false, fadeDur: 0.2
+      friction: 0.2, life: 0.06, color: [1, 0.98, 0.94], radius: bloom * 0.42 * flashK, bright: 1.6,
+      hot: 1, kind: 'flash', ribbon: false, head: false, fadeDur: 0.1
     })
     spawnSpark({
       x: p.x, y: p.y, z: p.z, vx: v.x, vy: v.y, vz: v.z,
-      friction: 0.15, life: 0.2, color: recipe.flash, radius: 62, bright: 1.15,
-      hot: 1, kind: 'flash', ribbon: false, head: false, fadeDur: 0.34
+      friction: 0.15, life: 0.1, color: recipe.flash, radius: bloom * 0.9 * flashK, bright: shaped ? 0.7 : 1.15,
+      hot: 1, kind: 'flash', ribbon: false, head: false, fadeDur: 0.17
     })
     skyFlash = Math.min(1.2, skyFlash + 0.9)
-    spawnBurstSmoke(p.x, p.y, p.z)
-    labelEl.textContent = recipe.name
+    recipe.layers.forEach(layer => burstLayer(p.x, p.y, p.z, v.x, v.y, v.z, layer))
+    spawnBurstSmoke(p.x, p.y, p.z, bloom)
+    queueSound(p.x, p.y, p.z, 'bloom', bloom, bloomClip(recipe))
+    const gauge = GAUGES[recipe.gauge]
+    if (autoOn && gauge && gauge.height >= 250 && fanCooldown <= 0 && !fanQueue && Math.random() < 0.62) {
+      launchSparkFan()
+    }
+    if (elapsed >= bannerUntil) {
+      labelEl.textContent = recipe.name + '  ' + GAUGES[recipe.gauge].label
+    }
   }
 
-  function launch(x, z, recipeIndex) {
-    const recipe = recipeIndex == null ? Math.floor(Math.random() * RECIPES.length) : recipeIndex
-    spawnSpark({
+  function recipeWeight(recipe) {
+    const gauge = recipe.gauge
+    const pattern = recipe.layers.some(layer => layer.shape === 'pattern')
+    if (gauge >= 10) return 0.4
+    if (gauge <= 5) return pattern ? 1.1 : 2.8
+    return 1
+  }
+
+  function pickRecipe() {
+    let total = 0
+    const weights = []
+    for (let i = 0; i < RECIPES.length; i++) {
+      const w = recipeWeight(RECIPES[i])
+      weights.push(w)
+      total += w
+    }
+    let roll = Math.random() * total
+    for (let i = 0; i < weights.length; i++) {
+      roll -= weights[i]
+      if (roll <= 0) return i
+    }
+    return weights.length - 1
+  }
+
+  function risingSparkFraction(recipe) {
+    if (recipe.name === '柳' || recipe.name === '椰子' || recipe.name === '孔雀') return 0.92 + Math.random() * 0.08
+    return 0.5 + Math.random() * 0.24
+  }
+
+  function estimateBurstHeight(vy, friction) {
+    let y = 0.2
+    for (let t = 0.05; t < 16; t += 0.05) {
+      const v = velocityAt(0, vy, 0, friction, t, wind.x, wind.y, wind.z, null)
+      const p = ballistic(0, 0.2, 0, 0, vy, 0, friction, t, wind.x, wind.y, wind.z, null)
+      y = p.y
+      if (t > 1.8 && v.y < 6) break
+    }
+    return y
+  }
+
+  function launchSpeedForHeight(height) {
+    let lo = 30
+    let hi = 180
+    for (let i = 0; i < 24; i++) {
+      const mid = (lo + hi) * 0.5
+      if (estimateBurstHeight(mid, 0.05) < height) lo = mid
+      else hi = mid
+    }
+    return (lo + hi) * 0.5
+  }
+
+  function launch(x, z, recipeIndex, tilt, azimuth) {
+    const recipe = recipeIndex == null ? pickRecipe() : recipeIndex
+    const recipeObj = RECIPES[recipe]
+    const gauge = GAUGES[recipeObj.gauge]
+    const speed = launchSpeedForHeight(gauge.height) * (0.985 + Math.random() * 0.03)
+    const tiltRad = tilt || 0
+    const az = azimuth || 0
+    const friction = 0.05
+    let vx
+    let vy
+    let vz
+    if (tiltRad > 0.001) {
+      const horiz = speed * Math.sin(tiltRad)
+      vy = speed * Math.cos(tiltRad)
+      vx = Math.cos(az) * horiz + (Math.random() - 0.5) * 0.5
+      vz = Math.sin(az) * horiz + (Math.random() - 0.5) * 0.5
+    } else {
+      vy = speed
+      vx = -x * 0.015 + (Math.random() - 0.5) * 1.2
+      vz = (Math.random() - 0.5) * 1.2
+    }
+    const shell = spawnSpark({
       x, y: 0.2, z,
-      vx: -x * 0.03 + (Math.random() - 0.5) * 1.4,
-      vy: 54 + Math.random() * 12,
-      vz: (Math.random() - 0.5) * 1.4,
-      friction: 0.04,
-      life: 7.2,
+      vx, vy, vz,
+      friction,
+      life: Math.max(9.2, gauge.height / 48),
       color: [1, 0.5, 0.14],
       radius: 0.24,
       bright: 0.9,
       hot: 0.95,
       kind: 'shell',
+      ribbon: false,
       headSize: 3.4,
       fadeDur: 0.55,
       recipe
     })
+    if (shell) {
+      const burstY = estimateBurstHeight(vy, friction)
+      shell.sparkStopY = Math.max(12, burstY * risingSparkFraction(recipeObj))
+    }
+    const longTail = recipeObj.layers.some(layer => (layer.trail || 0) >= 1.2)
+    queueSound(x, 0.4, z, 'launch', gauge.height, longTail ? 'tail' : 'launch')
+  }
+
+  const SOUND_SPEED = 340
+  let audioCtx = null
+  let noiseBuffer = null
+  let masterGain = null
+  let reverb = null
+  let soundOn = false
+  const soundQueue = []
+
+  function outdoorImpulse(ctx) {
+    const rate = ctx.sampleRate
+    const length = Math.floor(rate * 2.6)
+    const buffer = ctx.createBuffer(2, length, rate)
+    const left = buffer.getChannelData(0)
+    const right = buffer.getChannelData(1)
+    const echoes = [
+      { t: 0.16, g: 0.46, pan: 0.22 },
+      { t: 0.38, g: 0.3, pan: -0.48 },
+      { t: 0.72, g: 0.16, pan: 0.5 },
+      { t: 1.22, g: 0.08, pan: -0.28 },
+      { t: 1.85, g: 0.035, pan: 0.18 }
+    ]
+    echoes.forEach(e => {
+      const start = Math.floor(e.t * rate)
+      const n = Math.floor(rate * (0.03 + e.t * 0.016))
+      const lg = e.g * Math.sqrt(0.5 * (1 - e.pan))
+      const rg = e.g * Math.sqrt(0.5 * (1 + e.pan))
+      let lp = 0
+      for (let i = 0; i < n; i++) {
+        const idx = start + i
+        if (idx >= length) break
+        lp = lp * 0.9 + (Math.random() * 2 - 1) * 0.1
+        const s = lp * Math.exp(-3.4 * i / n)
+        left[idx] += s * lg
+        right[idx] += s * rg
+      }
+    })
+    let lpL = 0
+    let lpR = 0
+    const tailStart = Math.floor(0.18 * rate)
+    for (let i = tailStart; i < length; i++) {
+      const env = Math.exp(-((i / rate) - 0.18) * 1.15) * 0.055
+      lpL = lpL * 0.965 + (Math.random() * 2 - 1) * 0.035
+      lpR = lpR * 0.965 + (Math.random() * 2 - 1) * 0.035
+      left[i] += lpL * env
+      right[i] += lpR * env
+    }
+    let peak = 0
+    for (let i = 0; i < length; i++) peak = Math.max(peak, Math.abs(left[i]), Math.abs(right[i]))
+    const scale = peak > 0 ? 0.85 / peak : 1
+    for (let i = 0; i < length; i++) {
+      left[i] *= scale
+      right[i] *= scale
+    }
+    return buffer
+  }
+
+  function audio() {
+    if (!audioCtx) {
+      const Ctx = window.AudioContext || window.webkitAudioContext
+      if (!Ctx) return null
+      audioCtx = new Ctx()
+      masterGain = audioCtx.createGain()
+      masterGain.gain.value = 0
+      const comp = audioCtx.createDynamicsCompressor()
+      comp.threshold.value = -14
+      comp.knee.value = 10
+      comp.ratio.value = 3
+      comp.attack.value = 0.003
+      comp.release.value = 0.18
+      masterGain.connect(comp)
+      comp.connect(audioCtx.destination)
+      reverb = audioCtx.createConvolver()
+      reverb.normalize = false
+      reverb.buffer = outdoorImpulse(audioCtx)
+      const reverbTone = audioCtx.createBiquadFilter()
+      reverbTone.type = 'lowpass'
+      reverbTone.frequency.value = 2600
+      reverb.connect(reverbTone)
+      reverbTone.connect(masterGain)
+      const length = audioCtx.sampleRate * 2
+      noiseBuffer = audioCtx.createBuffer(1, length, audioCtx.sampleRate)
+      const data = noiseBuffer.getChannelData(0)
+      for (let i = 0; i < length; i++) data[i] = Math.random() * 2 - 1
+    }
+    return audioCtx
+  }
+
+  function unlockAudio() {
+    const ctx = audio()
+    if (ctx && ctx.state === 'suspended') ctx.resume()
+  }
+
+  function queueSound(x, y, z, kind, size, clip) {
+    soundQueue.push({ x, y, z, kind, size: size || 80, clip: clip || kind, at: performance.now() / 1000 })
+    if (soundQueue.length > 64) soundQueue.shift()
+  }
+
+  function tone(ctx, when, dest, type, f0, f1, vol, attack, decay) {
+    const osc = ctx.createOscillator()
+    osc.type = type
+    osc.frequency.setValueAtTime(Math.max(28, f0), when)
+    osc.frequency.exponentialRampToValueAtTime(Math.max(24, f1), when + attack + decay)
+    const g = ctx.createGain()
+    g.gain.setValueAtTime(0.0001, when)
+    g.gain.exponentialRampToValueAtTime(Math.max(0.001, vol), when + attack)
+    g.gain.exponentialRampToValueAtTime(0.0001, when + attack + decay)
+    osc.connect(g)
+    g.connect(dest)
+    osc.start(when)
+    osc.stop(when + attack + decay + 0.02)
+  }
+
+  function noise(ctx, when, dest, filterType, freq, vol, attack, decay) {
+    const src = ctx.createBufferSource()
+    src.buffer = noiseBuffer
+    const filter = ctx.createBiquadFilter()
+    filter.type = filterType
+    filter.frequency.setValueAtTime(freq, when)
+    const g = ctx.createGain()
+    g.gain.setValueAtTime(0.0001, when)
+    g.gain.exponentialRampToValueAtTime(Math.max(0.001, vol), when + attack)
+    g.gain.exponentialRampToValueAtTime(0.0001, when + attack + decay)
+    src.connect(filter)
+    filter.connect(g)
+    g.connect(dest)
+    src.start(when)
+    src.stop(when + attack + decay + 0.02)
+  }
+
+  const CLIP = {
+    launch: ['sounds/shot_01.ogg', 'sounds/shot_02.ogg'],
+    mine: ['sounds/shot_03.ogg', 'sounds/shot_01.ogg'],
+    bloom: ['sounds/bang_08.ogg', 'sounds/bang_02.ogg', 'sounds/fw_05.ogg'],
+    boom: ['sounds/fw_04.ogg', 'sounds/cannon_02.ogg', 'sounds/fw_03.ogg']
+  }
+  const clips = { launch: [], mine: [], bloom: [], boom: [] }
+  let clipsLoading = false
+  let clipsReady = false
+
+  function decodeBase64(ctx, b64) {
+    const bin = atob(b64)
+    const bytes = new Uint8Array(bin.length)
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
+    return ctx.decodeAudioData(bytes.buffer)
+  }
+
+  function loadClips() {
+    const ctx = audio()
+    if (!ctx || clipsLoading) return
+    clipsLoading = true
+    const pack = window.HANABI_CLIPS
+    const jobs = []
+    if (pack) {
+      Object.keys(pack).forEach(key => {
+        pack[key].forEach(b64 => {
+          jobs.push(decodeBase64(ctx, b64).then(buf => {
+            clips[key].push(buf)
+          }).catch(() => {}))
+        })
+      })
+    } else {
+      Object.keys(CLIP).forEach(key => {
+        CLIP[key].forEach(url => {
+          jobs.push(fetch(url).then(res => res.arrayBuffer()).then(buf => ctx.decodeAudioData(buf)).then(audioBuf => {
+            clips[key].push(audioBuf)
+          }).catch(() => {}))
+        })
+      })
+    }
+    Promise.all(jobs).then(() => {
+      if (clips.bloom.length >= 3) {
+        clips.tail = [clips.bloom[2]]
+        clips.bloom = clips.bloom.slice(0, 2)
+      }
+      if (clips.boom.length >= 3) {
+        clips.cannon = [clips.boom[1]]
+        clips.decor = [clips.boom[2]]
+      }
+      clipsReady = true
+    })
+  }
+
+  function pickClip(key) {
+    const list = clips[key]
+    if (!list || !list.length) return null
+    return list[Math.floor(Math.random() * list.length)]
+  }
+
+  function playSound(s, remain, dist, pan) {
+    if (!clipsReady) return false
+    const ctx = audioCtx
+    const when = ctx.currentTime + remain + Math.random() * 0.04
+    const size = s.size
+    const kindGain = s.kind === 'launch' ? 0.48 : s.kind === 'bloom' ? 1 : 0.7
+    const vol = Math.min(1.15, (480 / Math.max(40, dist)) * kindGain)
+    const panner = ctx.createStereoPanner()
+    panner.pan.setValueAtTime(Math.max(-1, Math.min(1, pan)), when)
+    const dry = ctx.createGain()
+    dry.gain.setValueAtTime(1, when)
+    panner.connect(dry)
+    dry.connect(masterGain)
+    let wet = null
+    if (reverb) {
+      wet = ctx.createGain()
+      const open = s.kind === 'bloom' ? 1 : 0.42
+      wet.gain.setValueAtTime(Math.min(0.28, (0.08 + dist / 4000) * open), when)
+      panner.connect(wet)
+      wet.connect(reverb)
+    }
+    const release = () => {
+      try {
+        panner.disconnect()
+        dry.disconnect()
+        if (wet) wet.disconnect()
+      } catch (err) {}
+    }
+    const clipKey = s.clip || s.kind
+    const recorded = pickClip(clipKey)
+    if (recorded) {
+      const src = ctx.createBufferSource()
+      src.buffer = recorded
+      src.playbackRate.setValueAtTime(0.94 + Math.random() * 0.12, when)
+      const g = ctx.createGain()
+      const clipVol = vol * (clipKey === 'cannon' ? 1 : clipKey === 'mine' ? 0.45 : 0.8)
+      g.gain.setValueAtTime(clipVol, when)
+      src.connect(g)
+      g.connect(panner)
+      src.onended = release
+      src.start(when)
+      return true
+    }
+    if (s.kind === 'launch') {
+      tone(ctx, when, panner, 'sine', 82, 38, vol * 0.85, 0.01, 0.34)
+      noise(ctx, when, panner, 'bandpass', 200, vol * 0.4, 0.004, 0.16)
+    } else if (s.kind === 'mine') {
+      tone(ctx, when, panner, 'sine', 120, 60, vol * 0.32, 0.006, 0.1)
+      noise(ctx, when, panner, 'bandpass', 480, vol * 0.28, 0.003, 0.06)
+    } else {
+      const boom = Math.max(0.4, Math.min(1.4, 0.35 + size / 200))
+      const start = Math.max(46, 230 - size * 0.85)
+      noise(ctx, when, panner, 'highpass', 1000, vol * 0.5, 0.002, 0.045 + size / 900)
+      tone(ctx, when, panner, 'sine', start, Math.max(30, start * 0.32), vol * 0.9, 0.012, boom)
+      noise(ctx, when, panner, 'lowpass', 420, vol * 0.32, 0.01, boom * 0.75)
+    }
+    const marker = ctx.createBufferSource()
+    marker.buffer = ctx.createBuffer(1, 1, ctx.sampleRate)
+    marker.onended = release
+    marker.start(when + 2.2)
+    return true
+  }
+
+  function flushSounds() {
+    if (!soundOn || !audioCtx || audioCtx.state !== 'running' || !camera) return
+    const now = performance.now() / 1000
+    const cam = camera.position
+    for (let i = soundQueue.length - 1; i >= 0; i--) {
+      const s = soundQueue[i]
+      const dx = s.x - cam.x
+      const dy = s.y - cam.y
+      const dz = s.z - cam.z
+      const dist = Math.max(1, Math.hypot(dx, dy, dz))
+      const remain = dist / SOUND_SPEED - (now - s.at)
+      if (clipsReady && remain < -0.2) {
+        soundQueue.splice(i, 1)
+        continue
+      }
+      if (!clipsReady) continue
+      try {
+        if (playSound(s, Math.max(0, remain), dist, dx / dist) !== false) soundQueue.splice(i, 1)
+      } catch (err) {
+        soundQueue.splice(i, 1)
+      }
+    }
   }
 
   function spawnEmber(shell) {
     const p = at(shell, shell.age)
     const v = vel(shell, shell.age)
-    spawnSpark({
-      x: p.x, y: p.y, z: p.z,
-      vx: v.x * 0.15 + (Math.random() - 0.5) * 1.2,
-      vy: v.y * 0.05 - Math.random() * 1.5,
-      vz: v.z * 0.15 + (Math.random() - 0.5) * 1.2,
-      friction: 1.1,
-      life: 0.38 + Math.random() * 0.25,
-      color: [1, 0.46, 0.12],
-      radius: 0.14,
-      bright: 0.55,
-      hot: 0.4,
-      kind: 'ember',
-      head: false,
-      ribbon: true,
-      fadeDur: 0.25
-    })
+    const count = 4
+    for (let i = 0; i < count; i++) {
+      const hot = Math.random()
+      spawnSpark({
+        x: p.x + (Math.random() - 0.5) * 0.8,
+        y: p.y + (Math.random() - 0.5) * 0.8,
+        z: p.z + (Math.random() - 0.5) * 0.8,
+        vx: v.x * 0.05 + (Math.random() - 0.35) * 2.8,
+        vy: v.y * 0.03 - Math.random() * 4.2,
+        vz: v.z * 0.05 + (Math.random() - 0.5) * 2.8,
+        friction: 0.7 + Math.random() * 0.7,
+        life: 0.16 + Math.random() * 0.22,
+        color: hot > 0.62 ? [1, 0.9, 0.5] : [1, 0.38, 0.06],
+        radius: 0,
+        bright: 0.75 + Math.random() * 0.45,
+        hot: 0.85,
+        kind: 'ember',
+        head: true,
+        ribbon: false,
+        headSize: 1.2 + Math.random() * 1.8,
+        fadeDur: 0.1
+      })
+    }
   }
 
-  function spawnSmokePuff(x, y, z, vx, vy, vz, life, radius, alpha) {
+  function spawnSmokePuff(x, y, z, vx, vy, vz, life, radius, alpha, delay) {
     const s = spawnSpark({
       x, y, z, vx, vy, vz,
-      friction: 0.22,
+      friction: 0.28,
       life,
-      color: [0.55, 0.52, 0.48],
+      color: [0.62, 0.6, 0.58],
       radius,
       bright: alpha,
       hot: 0,
       kind: 'smoke',
       ribbon: false,
       head: false,
-      fadeDur: 1.6
+      fadeDur: 6.4
     })
-    if (s) s.grav = -0.25
+    if (s) {
+      s.grav = -0.25
+      s.showAfter = delay || 0
+    }
     return s
   }
 
-  function spawnBurstSmoke(x, y, z) {
-    for (let i = 0; i < 26; i++) {
+  function spawnShapeSmoke(x, y, z, vx, vy, vz, layer) {
+    const speed = Math.hypot(vx, vy, vz) || 1
+    const reach = travelRadius(speed, layer.friction, bloomTime(layer))
+    const puff = Math.min(reach * 0.08, 12)
+    const placed = Math.max(0, reach - puff) * (0.55 + Math.random() * 0.45)
+    spawnSmokePuff(
+      x + (vx / speed) * placed,
+      y + (vy / speed) * placed,
+      z + (vz / speed) * placed,
+      (Math.random() - 0.5) * 0.6,
+      (Math.random() - 0.5) * 0.4,
+      (Math.random() - 0.5) * 0.6,
+      26 + Math.random() * 10,
+      puff * (0.8 + Math.random() * 0.3),
+      0.06 + Math.random() * 0.02,
+      layer.life * 0.08
+    )
+  }
+
+  function spawnBurstSmoke(x, y, z, bloom) {
+    const reach = Math.max(12, bloom || 40)
+    for (let i = 0; i < 22; i++) {
       const dir = onSphere()
-      const sp = 3 + Math.random() * 8
+      const puff = Math.min(reach * 0.07, 10)
+      const placed = Math.max(0, reach * 0.28 - puff) * Math.random()
       spawnSmokePuff(
-        x, y, z,
-        dir.x * sp,
-        dir.y * sp * 0.35 + 0.6,
-        dir.z * sp,
-        6 + Math.random() * 3,
-        8 + Math.random() * 10,
-        0.1 + Math.random() * 0.08
+        x + dir.x * placed,
+        y + dir.y * placed,
+        z + dir.z * placed,
+        (Math.random() - 0.5) * 0.6,
+        (Math.random() - 0.5) * 0.4,
+        (Math.random() - 0.5) * 0.6,
+        22 + Math.random() * 8,
+        puff,
+        0.055,
+        0.08
       )
     }
   }
@@ -346,10 +1280,10 @@
     const p = at(shell, shell.age)
     spawnSmokePuff(
       p.x, p.y, p.z,
-      (Math.random() - 0.5) * 1.4,
+      (Math.random() - 0.5) * 1.2 + 0.4,
       -0.6 - Math.random() * 0.8,
       (Math.random() - 0.5) * 1.4,
-      3.2 + Math.random() * 1.4,
+      12.8 + Math.random() * 5.6,
       5 + Math.random() * 4,
       0.12
     )
@@ -373,7 +1307,10 @@
         bright: spec.bright,
         hot: spec.hot,
         fadeDur: spec.fadeDur == null ? 0.35 : spec.fadeDur,
-        headSize: spec.headSize == null ? 0.85 : spec.headSize
+        nidan: spec.nidan || null,
+        trail: spec.trail || 0,
+        ribbon: (spec.trail || 0) > 0,
+        headSize: spec.headSize == null ? 1.7 : spec.headSize
       })
     }
   }
@@ -387,8 +1324,8 @@
   document.body.appendChild(renderer.domElement)
 
   const scene = new THREE.Scene()
-  const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 800)
-  camera.position.set(0, 18, 210)
+  const camera = new THREE.PerspectiveCamera(VIEW.fov, window.innerWidth / window.innerHeight, 0.3, 8000)
+  camera.position.set(0, VIEW.eye, VIEW.distance)
 
   const skyMat = new THREE.ShaderMaterial({
     side: THREE.BackSide,
@@ -415,13 +1352,17 @@
       }
     `
   })
-  scene.add(new THREE.Mesh(new THREE.SphereGeometry(420, 28, 18), skyMat))
+  scene.add(new THREE.Mesh(new THREE.SphereGeometry(5500, 28, 18), skyMat))
 
-  const starPositions = new Float32Array(480 * 3)
-  for (let i = 0; i < 480; i++) {
-    starPositions[i * 3] = (Math.random() - 0.5) * 380
-    starPositions[i * 3 + 1] = 12 + Math.random() * 200
-    starPositions[i * 3 + 2] = -40 - Math.random() * 220
+  const starPositions = new Float32Array(160 * 3)
+  for (let i = 0; i < 160; i++) {
+    const dir = onSphere()
+    const y = 0.12 + Math.abs(dir.y) * 0.88
+    const len = Math.hypot(dir.x, y, dir.z) || 1
+    const skyR = 4800
+    starPositions[i * 3] = dir.x / len * skyR
+    starPositions[i * 3 + 1] = y / len * skyR
+    starPositions[i * 3 + 2] = dir.z / len * skyR
   }
   const starGeo = new THREE.BufferGeometry()
   starGeo.setAttribute('position', new THREE.BufferAttribute(starPositions, 3))
@@ -435,15 +1376,56 @@
   }))
   scene.add(stars)
 
-  const ground = new THREE.Mesh(
-    new THREE.CircleGeometry(220, 40),
-    new THREE.MeshBasicMaterial({ color: 0x07080d })
-  )
+  const groundFlashes = []
+  for (let i = 0; i < 8; i++) groundFlashes.push(new THREE.Vector4())
+  const groundMat = new THREE.ShaderMaterial({
+    uniforms: {
+      flashes: { value: groundFlashes },
+      cameraPos: { value: new THREE.Vector3() }
+    },
+    vertexShader: `
+      varying vec3 vWorld;
+      void main() {
+        vec4 world = modelMatrix * vec4(position, 1.0);
+        vWorld = world.xyz;
+        gl_Position = projectionMatrix * viewMatrix * world;
+      }
+    `,
+    fragmentShader: `
+      varying vec3 vWorld;
+      uniform vec4 flashes[8];
+      uniform vec3 cameraPos;
+      void main() {
+        vec3 base = vec3(0.027, 0.031, 0.051);
+        float light = 0.0;
+        vec3 toCam = cameraPos - vWorld;
+        float camLen = inversesqrt(max(dot(toCam, toCam), 1.0));
+        vec3 V = toCam * camLen;
+        for (int i = 0; i < 8; i++) {
+          float w = flashes[i].w;
+          if (w <= 0.001) continue;
+          vec3 toLight = flashes[i].xyz - vWorld;
+          float dist2 = dot(toLight, toLight);
+          vec3 L = toLight * inversesqrt(max(dist2, 1.0));
+          float ndotl = max(L.y, 0.0);
+          vec3 incident = -L;
+          vec3 R = vec3(incident.x, -incident.y, incident.z);
+          float spec = pow(max(dot(R, V), 0.0), 4.2);
+          float atten = ndotl / (1.0 + dist2 / 65000.0);
+          light += w * spec * atten;
+        }
+        light = min(light, 0.45);
+        vec3 col = base + vec3(0.34, 0.27, 0.2) * light;
+        gl_FragColor = vec4(col, 1.0);
+      }
+    `
+  })
+  const ground = new THREE.Mesh(new THREE.CircleGeometry(4000, 64), groundMat)
   ground.rotation.x = -Math.PI / 2
   ground.position.y = -0.08
   scene.add(ground)
 
-  const SMOKE_MAX = 320
+  const SMOKE_MAX = 4000
   const smokePos = new Float32Array(SMOKE_MAX * 4 * 3)
   const smokeCol = new Float32Array(SMOKE_MAX * 4 * 4)
   const smokeQuad = new Float32Array(SMOKE_MAX * 4 * 2)
@@ -482,7 +1464,7 @@
       void main() {
         float d = dot(vQuad, vQuad);
         if (d > 1.0) discard;
-        float soft = pow(max(0.0, 1.0 - d), 1.8);
+        float soft = exp(-d * 2.4);
         gl_FragColor = vec4(vColor.rgb, vColor.a * soft);
       }
     `,
@@ -578,11 +1560,13 @@
       attribute float seed;
       varying vec3 vColor;
       varying float vSeed;
+      varying float vSize;
       void main() {
         vColor = color;
         vSeed = seed;
+        vSize = size;
         vec4 mv = modelViewMatrix * vec4(position, 1.0);
-        gl_PointSize = clamp(size * (640.0 / max(8.0, -mv.z)), 1.0, 48.0);
+        gl_PointSize = clamp(size, 1.0, 40.0);
         gl_Position = projectionMatrix * mv;
       }
     `,
@@ -590,14 +1574,16 @@
       uniform float uTime;
       varying vec3 vColor;
       varying float vSeed;
+      varying float vSize;
       void main() {
         vec2 uv = gl_PointCoord * 2.0 - 1.0;
         float d = dot(uv, uv);
         if (d > 1.0) discard;
-        float core = exp(-d * 8.0);
-        float halo = pow(max(0.0, 1.0 - d), 2.0);
-        float tw = 0.86 + 0.14 * sin(uTime * (10.0 + vSeed * 18.0) + vSeed * 30.0);
-        gl_FragColor = vec4(vColor * (core + halo * 0.28) * tw, 1.0);
+        float ball = clamp((vSize - 8.0) / 14.0, 0.0, 1.0);
+        float core = exp(-d * mix(5.5, 2.6, ball));
+        float halo = pow(max(0.0, 1.0 - d), mix(3.0, 1.8, ball)) * mix(0.12, 0.42, ball);
+        float tw = 0.82 + 0.18 * sin(uTime * (14.0 + vSeed * 36.0) + vSeed * 24.0);
+        gl_FragColor = vec4(vColor * (core + halo) * tw, 1.0);
       }
     `,
     blending: THREE.AdditiveBlending,
@@ -616,10 +1602,67 @@
     pointerX = (event.clientX / window.innerWidth) * 2 - 1
     pointerY = (event.clientY / window.innerHeight) * 2 - 1
   })
+  let autoOn = true
+  const autoBtn = document.getElementById('auto-toggle')
+  const manual = document.getElementById('manual')
+  const recipeSelect = document.getElementById('recipe')
+  const hint = document.getElementById('hint')
+  RECIPES.map((recipe, index) => ({ recipe, index }))
+    .sort((a, b) => a.recipe.gauge - b.recipe.gauge || a.index - b.index)
+    .forEach(({ recipe, index }) => {
+      const option = document.createElement('option')
+      option.value = String(index)
+      option.textContent = recipe.name + ' ' + GAUGES[recipe.gauge].label
+      recipeSelect.appendChild(option)
+    })
+  function setAuto(on) {
+    autoOn = on
+    autoBtn.textContent = on ? '自動停止' : '自動開始'
+    manual.classList.toggle('on', !on)
+    hint.textContent = on
+      ? '画面をクリックすると、その位置から打ち上がります'
+      : '種類を選んで打ち上げるか、画面をクリックします'
+  }
+  const soundBtn = document.getElementById('sound-toggle')
+  const volumeInput = document.getElementById('volume')
+  function volumeFromSlider(value) {
+    return Math.pow(Number(value) / 100, 4)
+  }
+  let soundVolume = volumeFromSlider(volumeInput.value)
+  function applyVolume() {
+    if (!audioCtx || !masterGain || !soundOn) return
+    masterGain.gain.setValueAtTime(soundVolume, audioCtx.currentTime)
+  }
+  volumeInput.addEventListener('input', () => {
+    soundVolume = volumeFromSlider(volumeInput.value)
+    applyVolume()
+  })
+  function setSound(on) {
+    soundOn = on
+    soundBtn.textContent = on ? 'ミュート' : 'ミュート解除'
+    const ctx = audio()
+    if (!ctx || !masterGain) return
+    if (on) {
+      if (ctx.state === 'suspended') ctx.resume()
+      masterGain.gain.setValueAtTime(soundVolume, ctx.currentTime)
+      loadClips()
+    } else {
+      masterGain.gain.setValueAtTime(0, ctx.currentTime)
+      soundQueue.length = 0
+    }
+  }
+  soundBtn.addEventListener('click', () => setSound(!soundOn))
+  autoBtn.addEventListener('click', () => setAuto(!autoOn))
+  document.getElementById('fire').addEventListener('click', () => {
+    launch((Math.random() - 0.5) * 20, (Math.random() - 0.5) * 6, Number(recipeSelect.value))
+  })
+
+  window.addEventListener('contextmenu', event => event.preventDefault())
   window.addEventListener('pointerdown', event => {
+    if (event.target.closest('#bar')) return
     const x = ((event.clientX / window.innerWidth) * 2 - 1) * 40
     const z = (Math.random() - 0.5) * 14
-    launch(x, z)
+    launch(x, z, autoOn ? undefined : Number(recipeSelect.value))
   })
   window.addEventListener('resize', () => {
     camera.aspect = window.innerWidth / window.innerHeight
@@ -632,6 +1675,91 @@
   let volleyTimer = 0
   let elapsed = 0
   let last = performance.now() / 1000
+  let bannerUntil = 0
+  let nextFeature = 11
+  let fanQueue = null
+  let fanCooldown = 0
+  let program = null
+
+  function recipeIndex(name) {
+    return RECIPES.findIndex(recipe => recipe.name === name)
+  }
+
+  function beginProgram(items, title, hold) {
+    program = { items, index: 0, elapsed: 0 }
+    labelEl.textContent = title
+    bannerUntil = elapsed + hold
+  }
+
+  function startShaku() {
+    beginProgram([
+      { t: 0, x: 0, z: 0, recipe: recipeIndex('尺玉'), tilt: 0, az: 0 }
+    ], '尺玉', 10)
+  }
+
+  function spawnFanBloom(x, tilt, speed) {
+    queueSound(x, 0.4, 0, 'mine', 40)
+    const stars = 8
+    for (let k = 0; k < stars; k++) {
+      const th = tilt + (Math.random() - 0.5) * 0.14
+      const sp = speed * (0.78 + Math.random() * 0.34)
+      const gold = Math.random()
+      const color = gold > 0.72 ? [1, 0.28, 0.22] : gold > 0.5 ? [1, 0.78, 0.28] : [1, 0.55, 0.12]
+      const spark = spawnSpark({
+        x, y: 0.4, z: (Math.random() - 0.5) * 1.2,
+        vx: Math.sin(th) * sp,
+        vy: Math.cos(th) * sp,
+        vz: (Math.random() - 0.5) * sp * 0.06,
+        friction: 1.05,
+        life: 2.8 * (0.9 + Math.random() * 0.16),
+        color,
+        radius: 0.42,
+        bright: 1.15,
+        hot: 0.55,
+        kind: 'spark',
+        ribbon: true,
+        trail: 0.42,
+        head: true,
+        headSize: 2.6,
+        fadeDur: 0.28
+      })
+      if (spark) {
+        spark.fanStar = true
+        spark.endAt = spark.life
+      }
+    }
+  }
+
+  function launchSparkFan() {
+    const patterns = ['fan', 'seq-left', 'seq-right', 'diag-left', 'diag-right', 'split', 'cross']
+    const pattern = patterns[Math.floor(Math.random() * patterns.length)]
+    const count = 24
+    const spacing = 10.2
+    const span = 32 * Math.PI / 180
+    const speed = 78 + Math.random() * 10
+    const origin = (Math.random() - 0.5) * 24
+    const xLeft = origin - ((count - 1) * spacing) / 2
+    const items = []
+    for (let i = 0; i < count; i++) {
+      const u = count === 1 ? 0 : (i / (count - 1)) * 2 - 1
+      let tilt = u * span
+      let delay = 0
+      if (pattern === 'seq-left') delay = i * 0.028
+      else if (pattern === 'seq-right') delay = (count - 1 - i) * 0.028
+      else if (pattern === 'diag-left') tilt = -0.5 + (Math.random() - 0.5) * 0.06
+      else if (pattern === 'diag-right') tilt = 0.5 + (Math.random() - 0.5) * 0.06
+      else if (pattern === 'split') tilt = (u < 0 ? -1 : 1) * (0.28 + Math.abs(u) * 0.22)
+      else if (pattern === 'cross') tilt = (u < 0 ? 1 : -1) * (0.26 + Math.abs(u) * 0.2)
+      items.push({ t: delay, x: xLeft + i * spacing, tilt, speed })
+    }
+    items.sort((a, b) => a.t - b.t)
+    fanQueue = { items, index: 0, elapsed: 0 }
+    fanCooldown = 6
+    if (elapsed >= bannerUntil) {
+      labelEl.textContent = 'スターマイン'
+      bannerUntil = elapsed + 4
+    }
+  }
 
   function beginFade(s) {
     s.frozen = s.age
@@ -640,9 +1768,9 @@
   }
 
   function updateWind(time) {
-    wind.x = 0.9 * Math.sin(0.17 * time) + 0.25 * Math.sin(0.53 * time)
-    wind.y = 0
-    wind.z = 0.4 * Math.sin(0.13 * time + 1.2)
+    wind.x = 2.0 + 0.25 * Math.sin(0.11 * time)
+    wind.y = 0.12 * Math.sin(0.07 * time)
+    wind.z = 0.35 * Math.sin(0.09 * time + 0.6)
   }
 
   function step(dt) {
@@ -655,17 +1783,28 @@
       }
       s.age += dt
       if (s.kind === 'shell') {
-        s.emberAcc += dt
-        if (s.emberAcc > 0.045) {
-          s.emberAcc = 0
-          spawnEmber(s)
-        }
-        s.smokeAcc += dt
-        if (s.smokeAcc > 0.14) {
-          s.smokeAcc = 0
-          spawnTrailSmoke(s)
+        const here = at(s, s.age)
+        const stillSparking = here.y < (s.sparkStopY || 1e9)
+        if (stillSparking) {
+          s.emberAcc += dt
+          if (s.emberAcc > 0.028) {
+            s.emberAcc = 0
+            spawnEmber(s)
+          }
+          s.smokeAcc += dt
+          if (s.smokeAcc > 0.14) {
+            s.smokeAcc = 0
+            spawnTrailSmoke(s)
+          }
+        } else {
+          s.head = false
         }
         const v = vel(s, s.age)
+        if (s.noBurst) {
+          const sp = Math.hypot(v.x, v.y, v.z)
+          if (s.age >= s.life || (s.age > 0.55 && sp < 9)) beginFade(s)
+          return
+        }
         if ((s.age > 1.8 && v.y < 6) || s.age >= s.life) {
           s.age = Math.min(s.age, s.life)
           explode(s)
@@ -676,7 +1815,8 @@
       if (s.nidan && !s.nidanDone && s.age > s.life * 0.46) {
         s.nidanDone = true
         spawnChildren(s, s.nidan)
-        s.life = s.age + 0.18
+        s.life = s.age + 0.45
+        s.endAt = s.life
       }
       if (s.crackle > 0 && !s.crackleRolled && s.age > s.life * 0.2) {
         s.crackleRolled = true
@@ -695,6 +1835,34 @@
           hot: 1,
           headSize: 1.5
         })
+      }
+      if (s.fanStar) {
+        const fv = vel(s, s.age)
+        const sp = Math.hypot(fv.x, fv.y, fv.z)
+        s.smokeAcc += dt
+        if (s.smokeAcc > 0.88) {
+          s.smokeAcc = 0
+          const p = at(s, s.age)
+          spawnSmokePuff(
+            p.x, p.y, p.z,
+            (Math.random() - 0.5) * 0.5,
+            (Math.random() - 0.5) * 0.3,
+            (Math.random() - 0.5) * 0.5,
+            16 + Math.random() * 6,
+            5 + Math.random() * 3,
+            0.045,
+            0.15
+          )
+        }
+        if (s.age >= s.life || (s.age > 0.45 && sp < 8)) {
+          beginFade(s)
+          return
+        }
+      }
+      if (s.kind === 'spark' && s.endAt && s.age >= s.endAt) {
+        s.fadeDur = 0.1 + Math.random() * 0.14
+        beginFade(s)
+        return
       }
       if (s.age >= s.life) {
         s.age = s.life
@@ -736,51 +1904,63 @@
 
     for (let n = 0; n < sparks.length; n++) {
       const s = sparks[n]
+      if (!s.alive || s.kind !== 'flash') continue
+      const shown = s.fading ? s.frozen : s.age
+      const fade = s.fading ? Math.max(0, 1 - s.fadeAge / Math.max(s.fadeDur, 0.001)) : 1
+      if (fade <= 0.02) continue
+      if (verts + 4 > MAX_VERTS || indices + 6 > MAX_INDICES) continue
+      const p = at(s, shown)
+      const rad = s.radius * fade
+      const c0 = s.r * fade * 1.35
+      const c1 = s.g * fade * 1.15
+      const c2 = s.b * fade * 0.9
+      const a = vert(p.x - rightX * rad - upX * rad, p.y - rightY * rad - upY * rad, p.z - rightZ * rad - upZ * rad, c0, c1, c2, -1, -1, 1)
+      vert(p.x + rightX * rad - upX * rad, p.y + rightY * rad - upY * rad, p.z + rightZ * rad - upZ * rad, c0, c1, c2, 1, -1, 1)
+      vert(p.x - rightX * rad + upX * rad, p.y - rightY * rad + upY * rad, p.z - rightZ * rad + upZ * rad, c0, c1, c2, -1, 1, 1)
+      vert(p.x + rightX * rad + upX * rad, p.y + rightY * rad + upY * rad, p.z + rightZ * rad + upZ * rad, c0, c1, c2, 1, 1, 1)
+      rIndex[indices++] = a
+      rIndex[indices++] = a + 1
+      rIndex[indices++] = a + 2
+      rIndex[indices++] = a + 1
+      rIndex[indices++] = a + 3
+      rIndex[indices++] = a + 2
+    }
+
+    for (let n = 0; n < sparks.length; n++) {
+      const s = sparks[n]
       if (!s.alive) continue
       const shown = s.fading ? s.frozen : s.age
       const lifeU = Math.min(1, shown / Math.max(s.life, 0.001))
       const lifeFade = lifeU < 0.72 ? 1 : 1 - ((lifeU - 0.72) / 0.28) * 0.8
-      const fade = (s.fading ? Math.max(0, 1 - s.fadeAge / s.fadeDur) : 1) * lifeFade
-      if (fade <= 0.02) continue
-      if (s.kind === 'smoke') continue
-
-      if (s.kind === 'flash') {
-        if (verts + 4 > MAX_VERTS || indices + 6 > MAX_INDICES) continue
-        const p = at(s, shown)
-        const rad = s.radius * fade
-        const c0 = s.r * fade * 1.35
-        const c1 = s.g * fade * 1.15
-        const c2 = s.b * fade * 0.9
-        const a = vert(p.x - rightX * rad - upX * rad, p.y - rightY * rad - upY * rad, p.z - rightZ * rad - upZ * rad, c0, c1, c2, -1, -1, 1)
-        vert(p.x + rightX * rad - upX * rad, p.y + rightY * rad - upY * rad, p.z + rightZ * rad - upZ * rad, c0, c1, c2, 1, -1, 1)
-        vert(p.x - rightX * rad + upX * rad, p.y - rightY * rad + upY * rad, p.z - rightZ * rad + upZ * rad, c0, c1, c2, -1, 1, 1)
-        vert(p.x + rightX * rad + upX * rad, p.y + rightY * rad + upY * rad, p.z + rightZ * rad + upZ * rad, c0, c1, c2, 1, 1, 1)
-        rIndex[indices++] = a
-        rIndex[indices++] = a + 1
-        rIndex[indices++] = a + 2
-        rIndex[indices++] = a + 1
-        rIndex[indices++] = a + 3
-        rIndex[indices++] = a + 2
-        continue
+      let fade = (s.fading ? Math.max(0, 1 - s.fadeAge / s.fadeDur) : 1) * lifeFade
+      if (s.kind === 'spark' && lifeU > (s.glitterAt == null ? 0.48 : s.glitterAt)) {
+        const start = s.glitterAt == null ? 0.48 : s.glitterAt
+        const glitter = (lifeU - start) / Math.max(0.05, 1 - start)
+        const blink = Math.abs(Math.sin(time * (16 + s.seed * 34) + s.seed * 28))
+        fade *= 1 - glitter + glitter * (0.2 + 0.8 * blink)
       }
+      if (fade <= 0.02) continue
+      if (s.kind === 'smoke' || s.kind === 'flash') continue
 
-      if (s.ribbon && shown > 0.03 && verts + (SAMPLES + 1) * 2 <= MAX_VERTS && indices + SAMPLES * 6 <= MAX_INDICES) {
+      if (s.ribbon && s.trail > 0 && shown > 0.02 && verts + (SAMPLES + 1) * 2 <= MAX_VERTS && indices + SAMPLES * 6 <= MAX_INDICES) {
         const hotK = s.hot * (1 - Math.min(1, lifeU / 0.22))
         const cr = s.r * (1 - hotK) + hotK
         const cg = s.g * (1 - hotK) + hotK * 0.94
         const cb = s.b * (1 - hotK) + hotK * 0.75
         const base = verts
+        const t0 = Math.max(0, shown - s.trail)
+        const span = Math.max(0.02, shown - t0)
         let prevX = 0
         let prevY = 0
         let prevZ = 0
         for (let i = 0; i <= SAMPLES; i++) {
           const along = i / SAMPLES
-          const p = at(s, shown * along)
+          const p = at(s, t0 + span * along)
           let tx
           let ty
           let tz
           if (i < SAMPLES) {
-            const q = at(s, shown * (i + 1) / SAMPLES)
+            const q = at(s, t0 + span * (i + 1) / SAMPLES)
             tx = q.x - p.x
             ty = q.y - p.y
             tz = q.z - p.z
@@ -809,12 +1989,21 @@
           sy /= sl
           sz /= sl
           const dist = Math.max(8, Math.hypot(toX, toY, toZ))
-          const pixels = (2.4 + s.radius * 8) * (0.28 + 0.72 * Math.pow(along, 0.55))
+          const pixels = (7.4 + s.radius * 1.2) * (0.72 + 0.28 * along)
           const half = dist * (pixels * 0.5) / focal
-          const tail = 0.12 + 0.88 * Math.min(1, along / 0.28)
+          const tail = 0.05 + 0.95 * along
           const bright = s.bright * fade * tail
-          vert(p.x - sx * half, p.y - sy * half, p.z - sz * half, cr * bright, cg * bright, cb * bright, -1, along, 0)
-          vert(p.x + sx * half, p.y + sy * half, p.z + sz * half, cr * bright, cg * bright, cb * bright, 1, along, 0)
+          let rr = cr
+          let rg = cg
+          let rb = cb
+          if (s.crown) {
+            const k = Math.max(0, (along - 0.58) / 0.42)
+            rr = cr * (1 - k) + s.crownR * k
+            rg = cg * (1 - k) + s.crownG * k
+            rb = cb * (1 - k) + s.crownB * k
+          }
+          vert(p.x - sx * half, p.y - sy * half, p.z - sz * half, rr * bright, rg * bright, rb * bright, -1, along, 0)
+          vert(p.x + sx * half, p.y + sy * half, p.z + sz * half, rr * bright, rg * bright, rb * bright, 1, along, 0)
         }
         for (let i = 0; i < SAMPLES; i++) {
           const a = base + i * 2
@@ -829,31 +2018,156 @@
 
       if (s.head && heads < MAX) {
         const p = at(s, shown)
-        const hot = s.hot * (lifeU < 0.2 ? 1 : 0.35)
+        const dist = Math.max(12, Math.hypot(cam.x - p.x, cam.y - p.y, cam.z - p.z))
+        const hot = s.hot * (lifeU < 0.2 ? 1 : 0.25)
+        const tipPixels = 7.4 + s.radius * 1.2
+        const px = s.trail > 0
+          ? tipPixels
+          : s.headSize * (1500 / dist)
         headPos[heads * 3] = p.x
         headPos[heads * 3 + 1] = p.y
         headPos[heads * 3 + 2] = p.z
-        headColor[heads * 3] = Math.min(1.35, s.r + hot * 0.55) * fade
-        headColor[heads * 3 + 1] = Math.min(1.2, s.g + hot * 0.4) * fade
-        headColor[heads * 3 + 2] = Math.min(1.05, s.b + hot * 0.2) * fade
-        headSize[heads] = s.headSize * (0.65 + 0.35 * fade) * s.bright
+        if (s.trail > 0) {
+          let hr = Math.min(1.35, s.r + hot * 0.35)
+          let hg = Math.min(1.2, s.g + hot * 0.25)
+          let hb = Math.min(1.05, s.b + hot * 0.12)
+          if (s.crown && lifeU > 0.12) {
+            const k = Math.min(1, (lifeU - 0.12) / 0.18)
+            hr = hr * (1 - k) + s.crownR * k
+            hg = hg * (1 - k) + s.crownG * k
+            hb = hb * (1 - k) + s.crownB * k
+          }
+          headColor[heads * 3] = hr * fade
+          headColor[heads * 3 + 1] = hg * fade
+          headColor[heads * 3 + 2] = hb * fade
+        } else {
+          const k = Math.max(1, s.bright)
+          let r = s.r * k + hot * 0.04
+          let g = s.g * k + hot * 0.03
+          let b = s.b * k + hot * 0.03
+          const peak = Math.max(r, g, b, 0.001)
+          if (peak > 1.05) {
+            const scale = 1.05 / peak
+            r *= scale
+            g *= scale
+            b *= scale
+          }
+          headColor[heads * 3] = r * fade
+          headColor[heads * 3 + 1] = g * fade
+          headColor[heads * 3 + 2] = b * fade
+        }
+        headSize[heads] = px * (s.fading ? 0.7 + 0.3 * fade : 1)
         headSeed[heads] = s.seed
         heads++
       }
     }
 
     let smokes = 0
+    const lights = []
+    const flashes = []
+    let ambR = 0
+    let ambG = 0
+    let ambB = 0
+    let ambW = 0
+    const cells = new Map()
+    for (let n = 0; n < sparks.length; n++) {
+      const s = sparks[n]
+      if (!s.alive || (s.kind !== 'spark' && s.kind !== 'flash')) continue
+      const shown = s.fading ? s.frozen : s.age
+      const fade = s.fading ? Math.max(0, 1 - s.fadeAge / Math.max(s.fadeDur, 0.001)) : 1
+      if (fade < 0.08) continue
+      const pos = at(s, shown)
+      if (s.kind === 'flash') {
+        flashes.push({ x: pos.x, y: pos.y, z: pos.z, w: fade * 2.6 })
+        continue
+      }
+      const w = fade
+      ambR += s.r * w
+      ambG += s.g * w
+      ambB += s.b * w
+      ambW += w
+      const key = Math.round(pos.x / 30) + ':' + Math.round(pos.y / 30) + ':' + Math.round(pos.z / 30)
+      let cell = cells.get(key)
+      if (!cell) {
+        cell = { x: 0, y: 0, z: 0, r: 0, g: 0, b: 0, w: 0 }
+        cells.set(key, cell)
+      }
+      cell.x += pos.x * w
+      cell.y += pos.y * w
+      cell.z += pos.z * w
+      cell.r += s.r * w
+      cell.g += s.g * w
+      cell.b += s.b * w
+      cell.w += w
+    }
+    cells.forEach(cell => {
+      lights.push({
+        x: cell.x / cell.w,
+        y: cell.y / cell.w,
+        z: cell.z / cell.w,
+        r: cell.r / cell.w,
+        g: cell.g / cell.w,
+        b: cell.b / cell.w,
+        w: Math.min(cell.w, 64)
+      })
+    })
+    const ambMix = ambW > 0 ? Math.min(0.28, ambW / 280) : 0
+    const ambColR = ambW > 0 ? ambR / ambW : 0.6
+    const ambColG = ambW > 0 ? ambG / ambW : 0.58
+    const ambColB = ambW > 0 ? ambB / ambW : 0.56
     for (let n = 0; n < sparks.length; n++) {
       const s = sparks[n]
       if (!s.alive || s.kind !== 'smoke' || smokes >= SMOKE_MAX) continue
       const shown = s.fading ? s.frozen : s.age
-      const u = Math.min(1, shown / Math.max(s.life, 0.001))
-      const fade = s.fading ? Math.max(0, 1 - s.fadeAge / s.fadeDur) : 1
-      const appear = Math.sin(Math.min(1, u * 1.1) * Math.PI)
-      const alpha = s.bright * appear * fade
-      if (alpha < 0.02) continue
+      const delay = s.showAfter || 0
+      if (shown < delay) continue
+      const visible = shown - delay
+      const span = Math.max(0.001, s.life - delay)
+      const u = Math.min(1, visible / span)
+      const fadeT = Math.min(1, visible / 2.4)
+      const fadeIn = fadeT * fadeT * (3 - 2 * fadeT)
+      const fadeOut = u < 0.82 ? 1 : Math.max(0, (1 - u) / 0.18)
+      const lifeFade = s.fading ? Math.max(0, 1 - s.fadeAge / Math.max(s.fadeDur, 0.001)) : 1
+      const alpha = s.bright * fadeIn * fadeOut * lifeFade
+      if (alpha < 0.01) continue
       const p = at(s, shown)
-      const rad = s.radius * (0.3 + u * 0.9)
+      let hueR = ambColR * ambMix
+      let hueG = ambColG * ambMix
+      let hueB = ambColB * ambMix
+      let hueW = ambMix
+      for (let i = 0; i < lights.length; i++) {
+        const L = lights[i]
+        const dx = p.x - L.x
+        const dy = p.y - L.y
+        const dz = p.z - L.z
+        const gain = L.w / (5 + (dx * dx + dy * dy + dz * dz) * 0.0011)
+        if (gain < 0.04) continue
+        hueR += L.r * gain
+        hueG += L.g * gain
+        hueB += L.b * gain
+        hueW += gain
+      }
+      const amount = hueW > 0 ? Math.min(0.97, hueW / 1.7) : 0
+      const cr = hueW > 0.001 ? hueR / hueW : s.r
+      const cg = hueW > 0.001 ? hueG / hueW : s.g
+      const cb = hueW > 0.001 ? hueB / hueW : s.b
+      let lr = Math.min(1, s.r * (1 - amount) + cr * amount)
+      let lg = Math.min(1, s.g * (1 - amount) + cg * amount)
+      let lb = Math.min(1, s.b * (1 - amount) + cb * amount)
+      let white = 0
+      for (let i = 0; i < flashes.length; i++) {
+        const F = flashes[i]
+        const fx = p.x - F.x
+        const fy = p.y - F.y
+        const fz = p.z - F.z
+        white += F.w / (1 + (fx * fx + fy * fy + fz * fz) / 16000)
+      }
+      white = Math.min(1, white)
+      lr = lr * (1 - white) + white
+      lg = lg * (1 - white) + white
+      lb = lb * (1 - white) + white
+      const lit = Math.min(0.48, alpha * (1 + white * 2.6))
+      const rad = s.radius
       const base = smokes * 4
       const corners = [[-1, -1], [1, -1], [-1, 1], [1, 1]]
       for (let k = 0; k < 4; k++) {
@@ -863,10 +2177,10 @@
         smokePos[i * 3] = p.x + (rightX * qx + upX * qy) * rad
         smokePos[i * 3 + 1] = p.y + (rightY * qx + upY * qy) * rad
         smokePos[i * 3 + 2] = p.z + (rightZ * qx + upZ * qy) * rad
-        smokeCol[i * 4] = s.r
-        smokeCol[i * 4 + 1] = s.g
-        smokeCol[i * 4 + 2] = s.b
-        smokeCol[i * 4 + 3] = alpha
+        smokeCol[i * 4] = lr
+        smokeCol[i * 4 + 1] = lg
+        smokeCol[i * 4 + 2] = lb
+        smokeCol[i * 4 + 3] = lit
         smokeQuad[i * 2] = qx
         smokeQuad[i * 2 + 1] = qy
       }
@@ -893,32 +2207,69 @@
     headGeo.getAttribute('seed').needsUpdate = true
     headMat.uniforms.uTime.value = time
     skyMat.uniforms.flash.value = skyFlash
+    groundMat.uniforms.cameraPos.value.copy(camera.position)
+    const litFlashes = flashes.slice().sort((a, b) => b.w - a.w)
+    for (let i = 0; i < groundFlashes.length; i++) {
+      const F = litFlashes[i]
+      if (F) groundFlashes[i].set(F.x, F.y, F.z, F.w)
+      else groundFlashes[i].set(0, 0, 0, 0)
+    }
   }
 
   function advance(dt) {
     elapsed += dt
     updateWind(elapsed)
-    skyFlash = Math.max(0, skyFlash - dt * 1.35)
+    skyFlash = Math.max(0, skyFlash - dt * 2.7)
+    fanCooldown = Math.max(0, fanCooldown - dt)
 
-    nextAuto -= dt
-    if (volleyLeft > 0) {
-      volleyTimer -= dt
-      if (volleyTimer <= 0) {
-        volleyLeft--
-        volleyTimer = 0.32
-        launch((Math.random() - 0.5) * 56, (Math.random() - 0.5) * 16)
+    if (fanQueue) {
+      fanQueue.elapsed += dt
+      while (fanQueue.index < fanQueue.items.length && fanQueue.items[fanQueue.index].t <= fanQueue.elapsed) {
+        const item = fanQueue.items[fanQueue.index++]
+        spawnFanBloom(item.x, item.tilt, item.speed)
       }
+      if (fanQueue.index >= fanQueue.items.length) fanQueue = null
     }
-    if (nextAuto <= 0) {
-      const volley = Math.random() < 0.34
-      if (volley) {
-        volleyLeft += 2 + Math.floor(Math.random() * 2)
-        volleyTimer = 0.32
-        launch((Math.random() - 0.5) * 50, (Math.random() - 0.5) * 12)
-      } else {
-        launch((Math.random() - 0.5) * 48, (Math.random() - 0.5) * 16)
+    if (program) {
+      program.elapsed += dt
+      while (program.index < program.items.length && program.items[program.index].t <= program.elapsed) {
+        const item = program.items[program.index++]
+        launch(item.x, item.z, item.recipe, item.tilt, item.az)
       }
-      nextAuto = 1.7 + Math.random() * 1.6
+      if (program.index >= program.items.length) {
+        program = null
+        nextAuto = Math.max(nextAuto, bannerUntil - elapsed)
+        volleyLeft = 0
+      }
+    } else if (autoOn) {
+      nextAuto -= dt
+      if (nextFeature <= 0) {
+        startShaku()
+        nextFeature = 36 + Math.random() * 18
+        nextAuto = 8
+        volleyLeft = 0
+      } else {
+        nextFeature -= dt
+        if (volleyLeft > 0) {
+          volleyTimer -= dt
+          if (volleyTimer <= 0) {
+            volleyLeft--
+            volleyTimer = 0.32
+            launch((Math.random() - 0.5) * 56, (Math.random() - 0.5) * 16)
+          }
+        }
+        if (nextAuto <= 0) {
+          const volley = Math.random() < 0.34
+          if (volley) {
+            volleyLeft += 2 + Math.floor(Math.random() * 2)
+            volleyTimer = 0.32
+            launch((Math.random() - 0.5) * 50, (Math.random() - 0.5) * 12)
+          } else {
+            launch((Math.random() - 0.5) * 48, (Math.random() - 0.5) * 16)
+          }
+          nextAuto = 1.7 + Math.random() * 1.6
+        }
+      }
     }
 
     step(dt)
@@ -926,10 +2277,17 @@
   }
 
   function frameCamera() {
-    const camX = pointerX * 14 + Math.sin(elapsed * 0.08) * 1.6
-    const camY = 18 + pointerY * -4
-    camera.position.set(camX, camY, 210)
-    camera.lookAt(camX * 0.15, 95, 0)
+    const pan = Math.tan(15 * Math.PI / 180)
+    const camX = pointerX * VIEW.distance * pan + Math.sin(elapsed * 0.08) * 1.2
+    const camY = VIEW.eye
+    const baseElev = Math.atan((VIEW.lookY - VIEW.eye) / VIEW.distance)
+    const maxElev = 40 * Math.PI / 180
+    const minElev = 12 * Math.PI / 180
+    const tilt = -pointerY * 22 * Math.PI / 180
+    const elev = Math.min(maxElev, Math.max(minElev, baseElev + tilt))
+    const lookY = camY + Math.tan(elev) * VIEW.distance
+    camera.position.set(camX, camY, VIEW.distance)
+    camera.lookAt(camX * 0.12, lookY, 0)
     camera.updateMatrixWorld()
   }
 
@@ -939,10 +2297,12 @@
     last = now
     advance(dt)
     frameCamera()
+    flushSounds()
     renderer.render(scene, camera)
     requestAnimationFrame(animate)
   }
 
+  updateWind(0)
   launch(-18, -4, 0)
   launch(16, 2, 4)
 
