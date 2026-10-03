@@ -112,9 +112,9 @@
   const MAX = 8192
   const GRAVITY = -9.8
 
-  function crownRecipe(gauge, count) {
+  function coreRecipe(gauge, count) {
     return {
-      name: '冠菊',
+      name: '芯入り',
       gauge,
       flash: [1, 0.72, 0.42],
       layers: [
@@ -123,6 +123,27 @@
       ]
     }
   }
+
+  function kamuroRecipe(gauge, count) {
+    return {
+      name: '冠菊',
+      gauge,
+      flash: [1, 0.78, 0.32],
+      layers: [
+        { shape: 'sphere', count, speed: 22, jitter: 0.1, friction: 0.58, life: 12.5, fadeDur: 3.2, trail: 4.8, color: [1, 0.7, 0.16], radius: 0.3, bright: 1.02, hot: 0.16, crackle: 0 }
+      ]
+    }
+  }
+
+  const SENRIN_COLORS = [
+    [1, 0.55, 0.12],
+    [1, 0.14, 0.18],
+    [0.28, 0.95, 0.42],
+    [0.32, 0.48, 1],
+    [1, 0.82, 0.28],
+    [0.82, 0.9, 1],
+    [1, 0.38, 0.62]
+  ]
 
   const RECIPES = [
     {
@@ -347,13 +368,20 @@
       gauge: 15,
       flash: [1, 0.88, 0.5],
       layers: [
-        { shape: 'sphere', count: 1100, speed: 64, jitter: 0.035, friction: 1.9, life: 3.15, fadeDur: 0.95, trail: 0.34, color: [1, 0.52, 0.12], radius: 0.26, bright: 1.02, hot: 0.38, crackle: 0.03 }
+        {
+          shape: 'senrin', count: 190, speed: 42, jitter: 0.06, friction: 0.5, life: 3,
+          flower: { count: 26, speed: 34, friction: 1.85, life: 2.8, trail: 0.62, radius: 0.3, bright: 1.22, hot: 0.48, fadeDur: 1.05 }
+        }
       ]
     },
-    crownRecipe(15, 720),
-    crownRecipe(20, 1000),
-    crownRecipe(30, 1400),
-    crownRecipe(40, 1800)
+    coreRecipe(15, 720),
+    coreRecipe(20, 1000),
+    coreRecipe(30, 1400),
+    coreRecipe(40, 1800),
+    kamuroRecipe(15, 240),
+    kamuroRecipe(20, 320),
+    kamuroRecipe(30, 440),
+    kamuroRecipe(40, 560)
   ]
 
 
@@ -516,6 +544,9 @@
     s.fan = false
     s.fanStar = false
     s.crown = false
+    s.senrin = null
+    s.senrinDone = false
+    s.tint = false
     return s
   }
 
@@ -530,7 +561,9 @@
     s.vz = opts.vz
     s.friction = opts.friction
     s.life = opts.life
-    if ((opts.kind || 'spark') === 'spark' && !opts.fanStar) {
+    s.senrin = opts.flower || null
+    s.senrinDone = false
+    if ((opts.kind || 'spark') === 'spark' && !opts.fanStar && !opts.senrinCarrier) {
       const burn = s.life
       const glitterWas = burn * 0.52
       const dieWas = burn * 0.28
@@ -719,36 +752,92 @@
     })
   }
 
-  function burstDirection(shape) {
-    if (shape === 'ball') return inBall()
-    if (shape === 'ring') {
-      const th = Math.random() * Math.PI * 2
-      const lift = (Math.random() - 0.5) * 0.16
-      const radial = Math.sqrt(Math.max(0, 1 - lift * lift))
-      return { x: radial * Math.cos(th), y: lift, z: radial * Math.sin(th) }
+  function randomFrame() {
+    const ny = onSphere()
+    const hint = Math.abs(ny.y) < 0.85 ? { x: 0, y: 1, z: 0 } : { x: 1, y: 0, z: 0 }
+    let nx = {
+      x: hint.y * ny.z - hint.z * ny.y,
+      y: hint.z * ny.x - hint.x * ny.z,
+      z: hint.x * ny.y - hint.y * ny.x
     }
-    if (shape === 'fan') {
+    const nl = Math.hypot(nx.x, nx.y, nx.z) || 1
+    nx = { x: nx.x / nl, y: nx.y / nl, z: nx.z / nl }
+    const nz = {
+      x: ny.y * nx.z - ny.z * nx.y,
+      y: ny.z * nx.x - ny.x * nx.z,
+      z: ny.x * nx.y - ny.y * nx.x
+    }
+    return { nx, ny, nz }
+  }
+
+  function worldDir(frame, local) {
+    return {
+      x: frame.nx.x * local.x + frame.ny.x * local.y + frame.nz.x * local.z,
+      y: frame.nx.y * local.x + frame.ny.y * local.y + frame.nz.y * local.z,
+      z: frame.nx.z * local.x + frame.ny.z * local.y + frame.nz.z * local.z
+    }
+  }
+
+  function burstDirection(shape, frame) {
+    let local
+    if (shape === 'ball') local = inBall()
+    else if (shape === 'ring') {
+      const th = Math.random() * Math.PI * 2
+      const lift = (Math.random() - 0.5) * 0.12
+      const radial = Math.sqrt(Math.max(0, 1 - lift * lift))
+      local = { x: radial * Math.cos(th), y: lift, z: radial * Math.sin(th) }
+    } else if (shape === 'fan') {
       const d = onSphere()
       d.y = -Math.abs(d.y) * 0.55 - 0.25
       const len = Math.hypot(d.x, d.y, d.z) || 1
-      return { x: d.x / len, y: d.y / len, z: d.z / len }
-    }
-    if (shape === 'canopy') {
+      local = { x: d.x / len, y: d.y / len, z: d.z / len }
+    } else if (shape === 'canopy') {
       const d = onSphere()
       d.y = Math.abs(d.y) * 0.55 + 0.22
       const len = Math.hypot(d.x, d.y, d.z) || 1
-      return { x: d.x / len, y: d.y / len, z: d.z / len }
-    }
-    return onSphere()
+      local = { x: d.x / len, y: d.y / len, z: d.z / len }
+    } else local = onSphere()
+    if (frame && (shape === 'ring' || shape === 'fan')) return worldDir(frame, local)
+    return local
   }
 
-  function burstLayer(x, y, z, pvx, pvy, pvz, layer) {
+  function burstSenrin(x, y, z, pvx, pvy, pvz, layer) {
+    for (let i = 0; i < layer.count; i++) {
+      const dir = onSphere()
+      const speed = layer.speed * (1 + (Math.random() * 2 - 1) * (layer.jitter || 0))
+      spawnSpark({
+        x, y, z,
+        vx: pvx * 0.15 + dir.x * speed,
+        vy: pvy * 0.15 + dir.y * speed,
+        vz: pvz * 0.15 + dir.z * speed,
+        friction: layer.friction,
+        life: layer.life * (0.92 + Math.random() * 0.16),
+        color: [0, 0, 0],
+        radius: 0.01,
+        bright: 0,
+        hot: 0,
+        crackle: 0,
+        fadeDur: 0.05,
+        trail: 0,
+        ribbon: false,
+        head: false,
+        senrinCarrier: true,
+        flower: layer.flower
+      })
+    }
+  }
+
+  function burstLayer(x, y, z, pvx, pvy, pvz, layer, frame) {
     if (layer.shape === 'pattern') {
       burstPattern(x, y, z, pvx, pvy, pvz, layer)
       return
     }
+    if (layer.shape === 'senrin') {
+      burstSenrin(x, y, z, pvx, pvy, pvz, layer)
+      return
+    }
     for (let i = 0; i < layer.count; i++) {
-      const dir = burstDirection(layer.shape)
+      const dir = burstDirection(layer.shape, frame)
       const speed = layer.speed * (1 + (Math.random() * 2 - 1) * layer.jitter)
       const vx = pvx * 0.22 + dir.x * speed
       const vy = pvy * 0.22 + dir.y * speed
@@ -792,21 +881,24 @@
     const v = vel(shell, age)
     const recipe = RECIPES[shell.recipe]
     const shaped = recipe.layers.some(layer => layer.shape === 'pattern')
+    const senrin = recipe.layers.some(layer => layer.shape === 'senrin')
     const flashK = shaped ? 0.62 : 1
+    const flare = senrin ? 2.6 : 1
     const bloom = recipe.bloomRadius || 40
     spawnSpark({
       x: p.x, y: p.y, z: p.z, vx: v.x, vy: v.y, vz: v.z,
-      friction: 0.2, life: 0.06, color: [1, 0.98, 0.94], radius: bloom * 0.42 * flashK, bright: 1.6,
-      hot: 1, kind: 'flash', ribbon: false, head: false, fadeDur: 0.1
+      friction: 0.2, life: 0.06 * flare, color: [1, 0.98, 0.94], radius: bloom * 0.42 * flashK, bright: 1.6,
+      hot: 1, kind: 'flash', ribbon: false, head: false, fadeDur: 0.1 * flare
     })
     spawnSpark({
       x: p.x, y: p.y, z: p.z, vx: v.x, vy: v.y, vz: v.z,
-      friction: 0.15, life: 0.1, color: recipe.flash, radius: bloom * 0.9 * flashK, bright: shaped ? 0.7 : 1.15,
-      hot: 1, kind: 'flash', ribbon: false, head: false, fadeDur: 0.17
+      friction: 0.15, life: 0.1 * flare, color: recipe.flash, radius: bloom * 0.9 * flashK, bright: shaped ? 0.7 : 1.15,
+      hot: 1, kind: 'flash', ribbon: false, head: false, fadeDur: 0.17 * flare
     })
     skyFlash = Math.min(1.2, skyFlash + 0.9)
-    recipe.layers.forEach(layer => burstLayer(p.x, p.y, p.z, v.x, v.y, v.z, layer))
-    spawnBurstSmoke(p.x, p.y, p.z, bloom)
+    const orient = recipe.layers.some(layer => layer.shape === 'ring' || layer.shape === 'fan') ? randomFrame() : null
+    recipe.layers.forEach(layer => burstLayer(p.x, p.y, p.z, v.x, v.y, v.z, layer, orient))
+    if (!senrin) spawnBurstSmoke(p.x, p.y, p.z, bloom, shellSmokeColor(recipe))
     queueSound(p.x, p.y, p.z, 'bloom', bloom, bloomClip(recipe))
     const gauge = GAUGES[recipe.gauge]
     if (autoOn && gauge && gauge.height >= 250 && fanCooldown <= 0 && !fanQueue && Math.random() < 0.62) {
@@ -815,6 +907,19 @@
     if (elapsed >= bannerUntil) {
       labelEl.textContent = recipe.name + '  ' + GAUGES[recipe.gauge].label
     }
+  }
+
+  function shellSmokeColor(recipe) {
+    let color = null
+    let count = -1
+    recipe.layers.forEach(layer => {
+      const n = layer.count || 0
+      if (layer.color && n >= count) {
+        color = layer.color
+        count = n
+      }
+    })
+    return color
   }
 
   function recipeWeight(recipe) {
@@ -842,7 +947,7 @@
   }
 
   function risingSparkFraction(recipe) {
-    if (recipe.name === '柳' || recipe.name === '椰子' || recipe.name === '孔雀') return 0.92 + Math.random() * 0.08
+    if (recipe.name === '柳' || recipe.name === '椰子' || recipe.name === '孔雀' || recipe.name === '冠菊') return 0.92 + Math.random() * 0.08
     return 0.5 + Math.random() * 0.24
   }
 
@@ -1215,7 +1320,7 @@
     }
   }
 
-  function spawnSmokePuff(x, y, z, vx, vy, vz, life, radius, alpha, delay) {
+  function spawnSmokePuff(x, y, z, vx, vy, vz, life, radius, alpha, delay, tint) {
     const s = spawnSpark({
       x, y, z, vx, vy, vz,
       friction: 0.28,
@@ -1232,15 +1337,20 @@
     if (s) {
       s.grav = -0.25
       s.showAfter = delay || 0
+      s.tint = !!tint
+      s.tintR = tint ? tint[0] : 0
+      s.tintG = tint ? tint[1] : 0
+      s.tintB = tint ? tint[2] : 0
     }
     return s
   }
 
-  function spawnShapeSmoke(x, y, z, vx, vy, vz, layer) {
+  function spawnShapeSmoke(x, y, z, vx, vy, vz, layer, tint) {
     const speed = Math.hypot(vx, vy, vz) || 1
     const reach = travelRadius(speed, layer.friction, bloomTime(layer))
     const puff = Math.min(reach * 0.08, 12)
     const placed = Math.max(0, reach - puff) * (0.55 + Math.random() * 0.45)
+    const hue = tint || layer.color
     spawnSmokePuff(
       x + (vx / speed) * placed,
       y + (vy / speed) * placed,
@@ -1251,11 +1361,12 @@
       26 + Math.random() * 10,
       puff * (0.8 + Math.random() * 0.3),
       0.06 + Math.random() * 0.02,
-      layer.life * 0.08
+      layer.life * 0.08,
+      hue
     )
   }
 
-  function spawnBurstSmoke(x, y, z, bloom) {
+  function spawnBurstSmoke(x, y, z, bloom, tint) {
     const reach = Math.max(12, bloom || 40)
     for (let i = 0; i < 22; i++) {
       const dir = onSphere()
@@ -1271,7 +1382,8 @@
         22 + Math.random() * 8,
         puff,
         0.055,
-        0.08
+        0.08,
+        tint
       )
     }
   }
@@ -1312,6 +1424,35 @@
         ribbon: (spec.trail || 0) > 0,
         headSize: spec.headSize == null ? 1.7 : spec.headSize
       })
+    }
+  }
+
+  function spawnSenrinFlower(carrier) {
+    const p = at(carrier, carrier.age)
+    const v = vel(carrier, carrier.age)
+    const spec = carrier.senrin
+    const color = SENRIN_COLORS[Math.floor(Math.random() * SENRIN_COLORS.length)]
+    for (let i = 0; i < spec.count; i++) {
+      const dir = onSphere()
+      const speed = spec.speed * (0.78 + Math.random() * 0.4)
+      const vx = v.x * 0.12 + dir.x * speed
+      const vy = v.y * 0.12 + dir.y * speed
+      const vz = v.z * 0.12 + dir.z * speed
+      spawnSpark({
+        x: p.x, y: p.y, z: p.z,
+        vx, vy, vz,
+        friction: spec.friction,
+        life: spec.life * (0.86 + Math.random() * 0.28),
+        color: tint(color),
+        radius: spec.radius,
+        bright: spec.bright,
+        hot: spec.hot,
+        fadeDur: spec.fadeDur,
+        trail: spec.trail,
+        ribbon: true,
+        head: true
+      })
+      if (i === 0) spawnShapeSmoke(p.x, p.y, p.z, vx, vy, vz, spec, color)
     }
   }
 
@@ -1812,6 +1953,12 @@
         }
         return
       }
+      if (s.senrin && !s.senrinDone && s.age >= s.life) {
+        s.senrinDone = true
+        spawnSenrinFlower(s)
+        s.alive = false
+        return
+      }
       if (s.nidan && !s.nidanDone && s.age > s.life * 0.46) {
         s.nidanDone = true
         spawnChildren(s, s.nidan)
@@ -1851,7 +1998,8 @@
             16 + Math.random() * 6,
             5 + Math.random() * 3,
             0.045,
-            0.15
+            0.15,
+            [s.r, s.g, s.b]
           )
         }
         if (s.age >= s.life || (s.age > 0.45 && sp < 8)) {
@@ -2081,7 +2229,8 @@
         flashes.push({ x: pos.x, y: pos.y, z: pos.z, w: fade * 2.6 })
         continue
       }
-      const w = fade
+      if (s.senrin && !s.head && !s.ribbon) continue
+      const w = fade * Math.max(0.35, s.bright || 1)
       ambR += s.r * w
       ambG += s.g * w
       ambB += s.b * w
@@ -2111,7 +2260,7 @@
         w: Math.min(cell.w, 64)
       })
     })
-    const ambMix = ambW > 0 ? Math.min(0.28, ambW / 280) : 0
+    const ambMix = ambW > 0 ? Math.min(0.08, ambW / 900) : 0
     const ambColR = ambW > 0 ? ambR / ambW : 0.6
     const ambColG = ambW > 0 ? ambG / ambW : 0.58
     const ambColB = ambW > 0 ? ambB / ambW : 0.56
@@ -2131,23 +2280,34 @@
       const alpha = s.bright * fadeIn * fadeOut * lifeFade
       if (alpha < 0.01) continue
       const p = at(s, shown)
-      let hueR = ambColR * ambMix
-      let hueG = ambColG * ambMix
-      let hueB = ambColB * ambMix
-      let hueW = ambMix
+      let hueR = s.r
+      let hueG = s.g
+      let hueB = s.b
+      let hueW = 0.25
+      if (s.tint) {
+        hueR = s.tintR
+        hueG = s.tintG
+        hueB = s.tintB
+        hueW = 1.8
+      } else {
+        hueR = ambColR * ambMix + s.r * 0.25
+        hueG = ambColG * ambMix + s.g * 0.25
+        hueB = ambColB * ambMix + s.b * 0.25
+        hueW = ambMix + 0.25
+      }
       for (let i = 0; i < lights.length; i++) {
         const L = lights[i]
         const dx = p.x - L.x
         const dy = p.y - L.y
         const dz = p.z - L.z
-        const gain = L.w / (5 + (dx * dx + dy * dy + dz * dz) * 0.0011)
-        if (gain < 0.04) continue
+        const gain = L.w / (3 + (dx * dx + dy * dy + dz * dz) * 0.00065)
+        if (gain < 0.12) continue
         hueR += L.r * gain
         hueG += L.g * gain
         hueB += L.b * gain
         hueW += gain
       }
-      const amount = hueW > 0 ? Math.min(0.97, hueW / 1.7) : 0
+      const amount = hueW > 0 ? Math.min(0.96, hueW / 1.15) : 0
       const cr = hueW > 0.001 ? hueR / hueW : s.r
       const cg = hueW > 0.001 ? hueG / hueW : s.g
       const cb = hueW > 0.001 ? hueB / hueW : s.b
@@ -2162,7 +2322,7 @@
         const fz = p.z - F.z
         white += F.w / (1 + (fx * fx + fy * fy + fz * fz) / 16000)
       }
-      white = Math.min(1, white)
+      white = Math.min(0.72, white)
       lr = lr * (1 - white) + white
       lg = lg * (1 - white) + white
       lb = lb * (1 - white) + white
