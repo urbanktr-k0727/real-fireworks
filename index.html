@@ -1,0 +1,1012 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>打ち上げ花火</title>
+<style>
+  html, body {
+    margin: 0;
+    height: 100%;
+    background: #05060c;
+    overflow: hidden;
+    touch-action: none;
+  }
+  canvas { display: block; }
+  .hud {
+    position: fixed;
+    left: 22px;
+    bottom: 18px;
+    color: rgba(255, 236, 214, 0.78);
+    font: 13px/1.7 "Hiragino Sans", "Yu Gothic", sans-serif;
+    letter-spacing: 0.06em;
+    pointer-events: none;
+    text-shadow: 0 1px 8px rgba(0, 0, 0, 0.85);
+  }
+  #label {
+    display: block;
+    min-height: 1.4em;
+    color: rgba(255, 214, 150, 0.92);
+  }
+</style>
+</head>
+<body>
+<p class="hud"><span id="label"></span>画面をクリックすると、その位置から打ち上がります</p>
+<script src="https://cdn.jsdelivr.net/npm/three@0.160.1/build/three.min.js"></script>
+<script>
+/**
+ * 打ち上げ花火
+ *
+ * 火花の位置は、速度に比例する空気抵抗と重力の解析解で進める。
+ * 線香花火 (tompng/senkouhanabi_gl) の火花の進み方を、
+ * 夜空で開く玉に合わせて組み直している。
+ * https://github.com/tompng/senkouhanabi_gl
+ */
+(function () {
+  const MAX = 4096
+  const GRAVITY = -9.8
+
+  const RECIPES = [
+    {
+      name: '金菊',
+      flash: [1, 0.78, 0.42],
+      layers: [
+        { shape: 'sphere', count: 210, speed: 16, jitter: 0.08, friction: 0.7, life: 2.45, color: [1, 0.58, 0.16], radius: 0.58, bright: 1.05, hot: 0.9, crackle: 0.28 }
+      ]
+    },
+    {
+      name: '赤牡丹',
+      flash: [1, 0.45, 0.35],
+      layers: [
+        { shape: 'ball', count: 180, speed: 13.5, jitter: 0.15, friction: 1.25, life: 1.5, color: [1, 0.18, 0.22], radius: 0.66, bright: 1.15, hot: 0.75, crackle: 0 }
+      ]
+    },
+    {
+      name: '柳',
+      flash: [0.85, 0.95, 0.55],
+      layers: [
+        { shape: 'sphere', count: 86, speed: 9, jitter: 0.14, friction: 0.34, life: 3.15, color: [0.78, 0.92, 0.38], radius: 0.4, bright: 0.95, hot: 0.25, crackle: 0 }
+      ]
+    },
+    {
+      name: '二段咲き',
+      flash: [1, 0.85, 0.55],
+      layers: [
+        {
+          shape: 'sphere', count: 72, speed: 12.5, jitter: 0.08, friction: 0.58, life: 1.2,
+          color: [1, 0.72, 0.32], radius: 0.52, bright: 1.1, hot: 0.85, crackle: 0,
+          nidan: { count: 7, speed: 6.4, friction: 0.95, life: 1.15, color: [1, 0.32, 0.2], radius: 0.38, bright: 1.05, hot: 0.7 }
+        }
+      ]
+    },
+    {
+      name: '芯入り',
+      flash: [1, 0.7, 0.6],
+      layers: [
+        { shape: 'sphere', count: 42, speed: 6.2, jitter: 0.06, friction: 1.45, life: 1.15, color: [1, 0.94, 0.82], radius: 0.46, bright: 1.35, hot: 1, crackle: 0 },
+        { shape: 'sphere', count: 170, speed: 16.8, jitter: 0.07, friction: 0.76, life: 2.25, color: [1, 0.28, 0.48], radius: 0.52, bright: 1.05, hot: 0.8, crackle: 0.18 }
+      ]
+    },
+    {
+      name: '緑冠',
+      flash: [0.6, 1, 0.7],
+      layers: [
+        { shape: 'sphere', count: 150, speed: 14.5, jitter: 0.1, friction: 0.82, life: 2.05, color: [0.32, 1, 0.52], radius: 0.5, bright: 1.1, hot: 0.7, crackle: 0.12 },
+        { shape: 'sphere', count: 36, speed: 5.2, jitter: 0.2, friction: 0.4, life: 2.7, color: [0.75, 1, 0.45], radius: 0.34, bright: 0.75, hot: 0.3, crackle: 0 }
+      ]
+    }
+  ]
+
+  const wind = { x: 0, y: 0, z: 0 }
+
+  function ballistic(px, py, pz, vx, vy, vz, friction, t, wx, wy, wz) {
+    const f = Math.max(friction, 0.05)
+    const e = Math.exp(-f * t)
+    const wgy = wy + GRAVITY / f
+    return {
+      x: px + wx * t - (vx - wx) * (e - 1) / f,
+      y: py + wgy * t - (vy - wy - GRAVITY / f) * (e - 1) / f,
+      z: pz + wz * t - (vz - wz) * (e - 1) / f
+    }
+  }
+
+  function velocityAt(vx, vy, vz, friction, t, wx, wy, wz) {
+    const f = Math.max(friction, 0.05)
+    const e = Math.exp(-f * t)
+    return {
+      x: wx + (vx - wx) * e,
+      y: wy + GRAVITY / f + (vy - wy - GRAVITY / f) * e,
+      z: wz + (vz - wz) * e
+    }
+  }
+
+  function at(s, t) {
+    return ballistic(s.px, s.py, s.pz, s.vx, s.vy, s.vz, s.friction, t, s.wx, s.wy, s.wz)
+  }
+
+  function vel(s, t) {
+    return velocityAt(s.vx, s.vy, s.vz, s.friction, t, s.wx, s.wy, s.wz)
+  }
+
+  function onSphere() {
+    const z = Math.random() * 2 - 1
+    const th = Math.random() * Math.PI * 2
+    const r = Math.sqrt(Math.max(0, 1 - z * z))
+    return { x: r * Math.cos(th), y: z, z: r * Math.sin(th) }
+  }
+
+  function inBall() {
+    const d = onSphere()
+    const r = Math.cbrt(Math.random())
+    return { x: d.x * r, y: d.y * r, z: d.z * r }
+  }
+
+  const sparks = Array.from({ length: MAX }, () => ({ alive: false }))
+
+  function alloc() {
+    for (let i = 0; i < sparks.length; i++) {
+      if (!sparks[i].alive) return resetSpark(sparks[i])
+    }
+    return null
+  }
+
+  function resetSpark(s) {
+    s.alive = true
+    s.age = 0
+    s.fading = false
+    s.fadeAge = 0
+    s.fadeDur = 0.85
+    s.splitDone = false
+    s.nidanDone = false
+    s.crackleRolled = false
+    s.willCrackle = false
+    s.frozen = 0
+    s.emberAcc = 0
+    s.kind = 'spark'
+    s.ribbon = true
+    s.head = true
+    s.hot = 0.8
+    s.seed = Math.random()
+    s.headSize = 2.4
+    s.crackle = 0
+    s.nidan = null
+    s.recipe = 0
+    s.bright = 1
+    s.radius = 0.2
+    s.friction = 0.8
+    s.life = 1
+    return s
+  }
+
+  function spawnSpark(opts) {
+    const s = alloc()
+    if (!s) return null
+    s.px = opts.x
+    s.py = opts.y
+    s.pz = opts.z
+    s.vx = opts.vx
+    s.vy = opts.vy
+    s.vz = opts.vz
+    s.friction = opts.friction
+    s.life = opts.life
+    s.r = opts.color[0]
+    s.g = opts.color[1]
+    s.b = opts.color[2]
+    s.radius = opts.radius
+    s.bright = opts.bright
+    s.hot = opts.hot
+    s.crackle = opts.crackle || 0
+    s.nidan = opts.nidan || null
+    s.fadeDur = opts.fadeDur == null ? 0.9 : opts.fadeDur
+    s.kind = opts.kind || 'spark'
+    s.ribbon = opts.ribbon !== false
+    s.head = opts.head !== false
+    s.headSize = opts.headSize == null ? 2.4 : opts.headSize
+    s.recipe = opts.recipe || 0
+    s.wx = wind.x
+    s.wy = wind.y
+    s.wz = wind.z
+    return s
+  }
+
+  function tint(color) {
+    const k = 0.86 + Math.random() * 0.28
+    return [color[0] * k, color[1] * k, color[2] * k]
+  }
+
+  function burstLayer(x, y, z, pvx, pvy, pvz, layer) {
+    for (let i = 0; i < layer.count; i++) {
+      const dir = layer.shape === 'ball' ? inBall() : onSphere()
+      const speed = layer.speed * (1 + (Math.random() * 2 - 1) * layer.jitter)
+      spawnSpark({
+        x, y, z,
+        vx: pvx * 0.22 + dir.x * speed,
+        vy: pvy * 0.22 + dir.y * speed,
+        vz: pvz * 0.22 + dir.z * speed,
+        friction: layer.friction * (0.9 + Math.random() * 0.2),
+        life: layer.life * (0.88 + Math.random() * 0.24),
+        color: tint(layer.color),
+        radius: layer.radius,
+        bright: layer.bright,
+        hot: layer.hot,
+        crackle: layer.crackle || 0,
+        nidan: layer.nidan || null,
+        fadeDur: layer.friction < 0.35 ? 1.35 : 0.9
+      })
+    }
+  }
+
+  let skyFlash = 0
+  const blooms = []
+  const labelEl = document.getElementById('label')
+  window.addEventListener('error', event => {
+    labelEl.textContent = event.message || '描画を開始できませんでした'
+  })
+
+  function explode(shell) {
+    const age = Math.min(shell.age, shell.life)
+    const p = at(shell, age)
+    const v = vel(shell, age)
+    const recipe = RECIPES[shell.recipe]
+    recipe.layers.forEach(layer => burstLayer(p.x, p.y, p.z, v.x, v.y, v.z, layer))
+    spawnSpark({
+      x: p.x, y: p.y, z: p.z, vx: v.x, vy: v.y, vz: v.z,
+      friction: 0.4, life: 0.22, color: recipe.flash, radius: 11, bright: 1,
+      hot: 1, kind: 'flash', ribbon: false, head: false, fadeDur: 0.55
+    })
+    skyFlash = Math.min(0.7, skyFlash + 0.24)
+    const paint = recipe.layers[recipe.layers.length - 1].color
+    blooms.push({
+      x: p.x, y: p.y, z: p.z,
+      r: paint[0], g: paint[1], b: paint[2],
+      age: 0,
+      life: 2.8,
+      radius: 14
+    })
+    if (blooms.length > 14) blooms.shift()
+    labelEl.textContent = recipe.name
+  }
+
+  function launch(x, z, recipeIndex) {
+    const recipe = recipeIndex == null ? Math.floor(Math.random() * RECIPES.length) : recipeIndex
+    spawnSpark({
+      x, y: 0.2, z,
+      vx: -x * 0.04 + (Math.random() - 0.5) * 1.2,
+      vy: 27 + Math.random() * 7,
+      vz: (Math.random() - 0.5) * 1.4,
+      friction: 0.06,
+      life: 4.2,
+      color: [1, 0.5, 0.14],
+      radius: 0.24,
+      bright: 0.9,
+      hot: 0.95,
+      kind: 'shell',
+      headSize: 3.4,
+      fadeDur: 0.55,
+      recipe
+    })
+  }
+
+  function spawnEmber(shell) {
+    const p = at(shell, shell.age)
+    const v = vel(shell, shell.age)
+    spawnSpark({
+      x: p.x, y: p.y, z: p.z,
+      vx: v.x * 0.15 + (Math.random() - 0.5) * 1.2,
+      vy: v.y * 0.05 - Math.random() * 1.5,
+      vz: v.z * 0.15 + (Math.random() - 0.5) * 1.2,
+      friction: 1.1,
+      life: 0.38 + Math.random() * 0.25,
+      color: [1, 0.46, 0.12],
+      radius: 0.14,
+      bright: 0.55,
+      hot: 0.4,
+      kind: 'ember',
+      head: false,
+      ribbon: true,
+      fadeDur: 0.25
+    })
+  }
+
+  function spawnChildren(parent, spec) {
+    const p = at(parent, parent.age)
+    const v = vel(parent, parent.age)
+    for (let i = 0; i < spec.count; i++) {
+      const dir = onSphere()
+      const speed = spec.speed * (0.75 + Math.random() * 0.5)
+      spawnSpark({
+        x: p.x, y: p.y, z: p.z,
+        vx: v.x + dir.x * speed,
+        vy: v.y + dir.y * speed,
+        vz: v.z + dir.z * speed,
+        friction: spec.friction,
+        life: spec.life * (0.8 + Math.random() * 0.35),
+        color: tint(spec.color),
+        radius: spec.radius,
+        bright: spec.bright,
+        hot: spec.hot,
+        fadeDur: 0.7,
+        headSize: spec.headSize == null ? 0.85 : spec.headSize
+      })
+    }
+  }
+
+  const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false })
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2))
+  renderer.setSize(window.innerWidth, window.innerHeight)
+  renderer.setClearColor(0x05060c, 1)
+  renderer.outputColorSpace = THREE.LinearSRGBColorSpace
+  renderer.toneMapping = THREE.NoToneMapping
+  document.body.appendChild(renderer.domElement)
+
+  const scene = new THREE.Scene()
+  const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 800)
+  camera.position.set(0, 12, 112)
+
+  const skyMat = new THREE.ShaderMaterial({
+    side: THREE.BackSide,
+    depthWrite: false,
+    uniforms: { flash: { value: 0 } },
+    vertexShader: `
+      varying vec3 vDir;
+      void main() {
+        vDir = position;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }
+    `,
+    fragmentShader: `
+      varying vec3 vDir;
+      uniform float flash;
+      void main() {
+        float h = normalize(vDir).y;
+        vec3 zenith = vec3(0.012, 0.016, 0.04);
+        vec3 horizon = vec3(0.07, 0.045, 0.055);
+        float lift = smoothstep(-0.05, 0.42, h);
+        vec3 col = mix(horizon, zenith, lift);
+        col += vec3(0.16, 0.07, 0.03) * flash * (1.0 - smoothstep(-0.02, 0.3, h));
+        gl_FragColor = vec4(col, 1.0);
+      }
+    `
+  })
+  scene.add(new THREE.Mesh(new THREE.SphereGeometry(420, 28, 18), skyMat))
+
+  const starPositions = new Float32Array(480 * 3)
+  for (let i = 0; i < 480; i++) {
+    starPositions[i * 3] = (Math.random() - 0.5) * 380
+    starPositions[i * 3 + 1] = 12 + Math.random() * 200
+    starPositions[i * 3 + 2] = -40 - Math.random() * 220
+  }
+  const starGeo = new THREE.BufferGeometry()
+  starGeo.setAttribute('position', new THREE.BufferAttribute(starPositions, 3))
+  const stars = new THREE.Points(starGeo, new THREE.PointsMaterial({
+    color: 0xdfe7ff,
+    size: 1.15,
+    sizeAttenuation: false,
+    transparent: true,
+    opacity: 0.75,
+    depthWrite: false
+  }))
+  scene.add(stars)
+
+  const ground = new THREE.Mesh(
+    new THREE.CircleGeometry(220, 40),
+    new THREE.MeshBasicMaterial({ color: 0x07080d })
+  )
+  ground.rotation.x = -Math.PI / 2
+  ground.position.y = -0.08
+  scene.add(ground)
+
+  const lightPos = Array.from({ length: 8 }, () => new THREE.Vector3())
+  const lightCol = Array.from({ length: 8 }, () => new THREE.Vector3())
+  const buildingMat = new THREE.ShaderMaterial({
+    uniforms: {
+      lightPos: { value: lightPos },
+      lightCol: { value: lightCol },
+      lightCount: { value: 0 },
+      flash: { value: 0 }
+    },
+    vertexShader: `
+      attribute vec3 shade;
+      varying vec3 vWorld;
+      varying vec3 vNormal;
+      varying vec3 vShade;
+      void main() {
+        vec4 world = modelMatrix * vec4(position, 1.0);
+        vWorld = world.xyz;
+        vNormal = normalize(mat3(modelMatrix) * normal);
+        vShade = shade;
+        gl_Position = projectionMatrix * viewMatrix * world;
+      }
+    `,
+    fragmentShader: `
+      varying vec3 vWorld;
+      varying vec3 vNormal;
+      varying vec3 vShade;
+      uniform vec3 lightPos[8];
+      uniform vec3 lightCol[8];
+      uniform int lightCount;
+      uniform float flash;
+      void main() {
+        vec3 n = normalize(vNormal);
+        vec2 uv = abs(n.x) > abs(n.z) ? vWorld.zy : vWorld.xy;
+        vec2 cell = uv / vec2(1.65, 2.05);
+        vec2 g = fract(cell);
+        float pane = step(0.14, g.x) * step(0.12, g.y) * step(g.x, 0.9) * step(g.y, 0.88);
+        float id = floor(cell.x) + floor(cell.y) * 17.0;
+        float rnd = fract(sin(id * 127.1) * 43758.5);
+        float lit = step(0.8, rnd);
+        vec3 concrete = vec3(0.028, 0.03, 0.038) * vShade;
+        vec3 glass = vec3(0.01, 0.014, 0.026);
+        vec3 col = mix(concrete, glass, pane);
+        col += pane * lit * vec3(1.0, 0.58, 0.24) * 0.2;
+        for (int i = 0; i < 8; i++) {
+          if (i >= lightCount) break;
+          vec3 L = lightPos[i] - vWorld;
+          float dist = length(L);
+          L /= max(dist, 0.001);
+          float face = max(dot(n, L), 0.0);
+          float atten = 1.0 / (1.0 + dist * dist * 0.00065);
+          col += lightCol[i] * atten * pane * (pow(face, 16.0) * 1.6 + pow(face, 2.0) * 0.34);
+        }
+        col += pane * vec3(0.22, 0.1, 0.04) * flash * 0.18;
+        float far = smoothstep(70.0, 190.0, length(vWorld.xz));
+        col = mix(col, vec3(0.02, 0.018, 0.03), far * 0.45);
+        gl_FragColor = vec4(col, 1.0);
+      }
+    `
+  })
+
+  const glassPlanes = []
+  function rotY(x, y, z, yaw) {
+    const c = Math.cos(yaw)
+    const s = Math.sin(yaw)
+    return { x: x * c + z * s, y, z: -x * s + z * c }
+  }
+  function addBuilding(x, z, w, d, h, yaw, shade) {
+    const geo = new THREE.BoxGeometry(w, h, d)
+    const count = geo.attributes.position.count
+    const shades = new Float32Array(count * 3)
+    for (let i = 0; i < count; i++) {
+      shades[i * 3] = shade
+      shades[i * 3 + 1] = shade
+      shades[i * 3 + 2] = shade
+    }
+    geo.setAttribute('shade', new THREE.BufferAttribute(shades, 3))
+    const mesh = new THREE.Mesh(geo, buildingMat)
+    mesh.position.set(x, h / 2, z)
+    mesh.rotation.y = yaw
+    scene.add(mesh)
+    const locals = [
+      { ox: w / 2, oz: 0, nx: 1, nz: 0, rx: 0, rz: -1, halfW: d / 2, halfH: h / 2 },
+      { ox: -w / 2, oz: 0, nx: -1, nz: 0, rx: 0, rz: 1, halfW: d / 2, halfH: h / 2 },
+      { ox: 0, oz: d / 2, nx: 0, nz: 1, rx: 1, rz: 0, halfW: w / 2, halfH: h / 2 },
+      { ox: 0, oz: -d / 2, nx: 0, nz: -1, rx: -1, rz: 0, halfW: w / 2, halfH: h / 2 }
+    ]
+    locals.forEach(face => {
+      const o = rotY(face.ox, 0, face.oz, yaw)
+      const n = rotY(face.nx, 0, face.nz, yaw)
+      const r = rotY(face.rx, 0, face.rz, yaw)
+      glassPlanes.push({
+        px: x + o.x, py: h / 2, pz: z + o.z,
+        nx: n.x, ny: 0, nz: n.z,
+        rx: r.x, ry: 0, rz: r.z,
+        ux: 0, uy: 1, uz: 0,
+        halfW: face.halfW, halfH: face.halfH
+      })
+    })
+  }
+  function mulberry32(seed) {
+    let a = seed
+    return () => {
+      a |= 0
+      a = a + 0x6D2B79F5 | 0
+      let t = Math.imul(a ^ a >>> 15, 1 | a)
+      t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t
+      return ((t ^ t >>> 14) >>> 0) / 4294967296
+    }
+  }
+  const cityRand = mulberry32(19)
+  ;[
+    [-46, 88, 14, 20, 11],
+    [-50, 64, 16, 26, 20],
+    [-44, 40, 15, 22, 15],
+    [-54, 18, 13, 18, 26],
+    [48, 90, 15, 18, 10],
+    [52, 66, 16, 24, 23],
+    [45, 42, 14, 22, 16],
+    [56, 16, 13, 18, 30]
+  ].forEach(([x, z, w, d, h]) => {
+    addBuilding(x, z, w, d, h, (cityRand() - 0.5) * 0.12, 0.75 + cityRand() * 0.45)
+  })
+  for (let i = -7; i <= 7; i++) {
+    const x = i * 13.5 + (cityRand() - 0.5) * 3.5
+    const z = -42 - cityRand() * 22 - Math.abs(i) * 1.2
+    const h = 16 + cityRand() * 18 + (Math.abs(i) > 4 ? 12 : 0)
+    addBuilding(x, z, 8 + cityRand() * 6, 8 + cityRand() * 5, h, (cityRand() - 0.5) * 0.08, 0.55 + cityRand() * 0.4)
+  }
+
+  const MAX_QUADS = 200
+  const refPos = new Float32Array(MAX_QUADS * 4 * 3)
+  const refCol = new Float32Array(MAX_QUADS * 4 * 3)
+  const refQuad = new Float32Array(MAX_QUADS * 4 * 2)
+  const refN = new Float32Array(MAX_QUADS * 4 * 3)
+  const refIndex = new Uint16Array(MAX_QUADS * 6)
+  for (let i = 0; i < MAX_QUADS; i++) {
+    const v = i * 4
+    const k = i * 6
+    refIndex[k] = v
+    refIndex[k + 1] = v + 1
+    refIndex[k + 2] = v + 2
+    refIndex[k + 3] = v + 1
+    refIndex[k + 4] = v + 3
+    refIndex[k + 5] = v + 2
+  }
+  const reflectGeo = new THREE.BufferGeometry()
+  reflectGeo.setAttribute('position', new THREE.BufferAttribute(refPos, 3).setUsage(THREE.DynamicDrawUsage))
+  reflectGeo.setAttribute('color', new THREE.BufferAttribute(refCol, 3).setUsage(THREE.DynamicDrawUsage))
+  reflectGeo.setAttribute('quad', new THREE.BufferAttribute(refQuad, 2).setUsage(THREE.DynamicDrawUsage))
+  reflectGeo.setAttribute('planeN', new THREE.BufferAttribute(refN, 3).setUsage(THREE.DynamicDrawUsage))
+  reflectGeo.setIndex(new THREE.BufferAttribute(refIndex, 1))
+  reflectGeo.setDrawRange(0, 0)
+  const reflectMat = new THREE.ShaderMaterial({
+    vertexShader: `
+      attribute vec3 color;
+      attribute vec2 quad;
+      attribute vec3 planeN;
+      varying vec3 vColor;
+      varying vec2 vQuad;
+      varying vec3 vWorld;
+      varying vec3 vPlaneN;
+      void main() {
+        vColor = color;
+        vQuad = quad;
+        vPlaneN = planeN;
+        vec4 world = modelMatrix * vec4(position, 1.0);
+        vWorld = world.xyz;
+        gl_Position = projectionMatrix * viewMatrix * world;
+      }
+    `,
+    fragmentShader: `
+      varying vec3 vColor;
+      varying vec2 vQuad;
+      varying vec3 vWorld;
+      varying vec3 vPlaneN;
+      void main() {
+        vec3 n = normalize(vPlaneN);
+        vec2 uv = abs(n.x) > abs(n.z) ? vWorld.zy : vWorld.xy;
+        vec2 g = fract(uv / vec2(1.65, 2.05));
+        float pane = step(0.14, g.x) * step(0.12, g.y) * step(g.x, 0.9) * step(g.y, 0.88);
+        if (pane < 0.5) discard;
+        float d = dot(vQuad, vQuad);
+        if (d > 1.0) discard;
+        gl_FragColor = vec4(vColor * exp(-d * 2.1), 1.0);
+      }
+    `,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    transparent: true,
+    premultipliedAlpha: false
+  })
+  const reflectMesh = new THREE.Mesh(reflectGeo, reflectMat)
+  reflectMesh.frustumCulled = false
+  reflectMesh.renderOrder = 1
+  scene.add(reflectMesh)
+
+  const SAMPLES = 10
+  const MAX_VERTS = MAX * (SAMPLES + 1) * 2
+  const MAX_INDICES = MAX * SAMPLES * 6
+  const rPos = new Float32Array(MAX * (SAMPLES + 1) * 2 * 3)
+  const rCol = new Float32Array(MAX * (SAMPLES + 1) * 2 * 3)
+  const rSide = new Float32Array(MAX * (SAMPLES + 1) * 2)
+  const rAlong = new Float32Array(MAX * (SAMPLES + 1) * 2)
+  const rShape = new Float32Array(MAX * (SAMPLES + 1) * 2)
+  const rIndex = new Uint32Array(MAX * SAMPLES * 6)
+  const ribbonGeo = new THREE.BufferGeometry()
+  ribbonGeo.setAttribute('position', new THREE.BufferAttribute(rPos, 3).setUsage(THREE.DynamicDrawUsage))
+  ribbonGeo.setAttribute('color', new THREE.BufferAttribute(rCol, 3).setUsage(THREE.DynamicDrawUsage))
+  ribbonGeo.setAttribute('side', new THREE.BufferAttribute(rSide, 1).setUsage(THREE.DynamicDrawUsage))
+  ribbonGeo.setAttribute('along', new THREE.BufferAttribute(rAlong, 1).setUsage(THREE.DynamicDrawUsage))
+  ribbonGeo.setAttribute('shape', new THREE.BufferAttribute(rShape, 1).setUsage(THREE.DynamicDrawUsage))
+  ribbonGeo.setIndex(new THREE.BufferAttribute(rIndex, 1).setUsage(THREE.DynamicDrawUsage))
+  ribbonGeo.setDrawRange(0, 0)
+
+  const ribbonMat = new THREE.ShaderMaterial({
+    vertexShader: `
+      attribute vec3 color;
+      attribute float side;
+      attribute float along;
+      attribute float shape;
+      varying vec3 vColor;
+      varying float vSide;
+      varying float vAlong;
+      varying float vShape;
+      void main() {
+        vColor = color;
+        vSide = side;
+        vAlong = along;
+        vShape = shape;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }
+    `,
+    fragmentShader: `
+      varying vec3 vColor;
+      varying float vSide;
+      varying float vAlong;
+      varying float vShape;
+      void main() {
+        if (vShape > 0.5) {
+          float d = vSide * vSide + vAlong * vAlong;
+          if (d > 1.0) discard;
+          gl_FragColor = vec4(vColor * exp(-d * 3.2), 1.0);
+          return;
+        }
+        float core = exp(-vSide * vSide * 5.5);
+        gl_FragColor = vec4(vColor * core, 1.0);
+      }
+    `,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    transparent: true,
+    premultipliedAlpha: false
+  })
+  const ribbonMesh = new THREE.Mesh(ribbonGeo, ribbonMat)
+  ribbonMesh.frustumCulled = false
+  ribbonMesh.renderOrder = 2
+  scene.add(ribbonMesh)
+
+  const headPos = new Float32Array(MAX * 3)
+  const headColor = new Float32Array(MAX * 3)
+  const headSize = new Float32Array(MAX)
+  const headSeed = new Float32Array(MAX)
+  const headGeo = new THREE.BufferGeometry()
+  headGeo.setAttribute('position', new THREE.BufferAttribute(headPos, 3).setUsage(THREE.DynamicDrawUsage))
+  headGeo.setAttribute('color', new THREE.BufferAttribute(headColor, 3).setUsage(THREE.DynamicDrawUsage))
+  headGeo.setAttribute('size', new THREE.BufferAttribute(headSize, 1).setUsage(THREE.DynamicDrawUsage))
+  headGeo.setAttribute('seed', new THREE.BufferAttribute(headSeed, 1).setUsage(THREE.DynamicDrawUsage))
+  headGeo.setDrawRange(0, 0)
+
+  const headMat = new THREE.ShaderMaterial({
+    uniforms: { uTime: { value: 0 } },
+    vertexShader: `
+      attribute float size;
+      attribute vec3 color;
+      attribute float seed;
+      varying vec3 vColor;
+      varying float vSeed;
+      void main() {
+        vColor = color;
+        vSeed = seed;
+        vec4 mv = modelViewMatrix * vec4(position, 1.0);
+        gl_PointSize = clamp(size * (640.0 / max(8.0, -mv.z)), 1.0, 48.0);
+        gl_Position = projectionMatrix * mv;
+      }
+    `,
+    fragmentShader: `
+      uniform float uTime;
+      varying vec3 vColor;
+      varying float vSeed;
+      void main() {
+        vec2 uv = gl_PointCoord * 2.0 - 1.0;
+        float d = dot(uv, uv);
+        if (d > 1.0) discard;
+        float core = exp(-d * 8.0);
+        float halo = pow(max(0.0, 1.0 - d), 2.0);
+        float tw = 0.86 + 0.14 * sin(uTime * (10.0 + vSeed * 18.0) + vSeed * 30.0);
+        gl_FragColor = vec4(vColor * (core + halo * 0.28) * tw, 1.0);
+      }
+    `,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    transparent: true,
+    premultipliedAlpha: false
+  })
+  const headPoints = new THREE.Points(headGeo, headMat)
+  headPoints.frustumCulled = false
+  headPoints.renderOrder = 3
+  scene.add(headPoints)
+
+  let pointerX = 0
+  let pointerY = 0
+  window.addEventListener('pointermove', event => {
+    pointerX = (event.clientX / window.innerWidth) * 2 - 1
+    pointerY = (event.clientY / window.innerHeight) * 2 - 1
+  })
+  window.addEventListener('pointerdown', event => {
+    const x = ((event.clientX / window.innerWidth) * 2 - 1) * 40
+    const z = (Math.random() - 0.5) * 14
+    launch(x, z)
+  })
+  window.addEventListener('resize', () => {
+    camera.aspect = window.innerWidth / window.innerHeight
+    camera.updateProjectionMatrix()
+    renderer.setSize(window.innerWidth, window.innerHeight)
+  })
+
+  let nextAuto = 0.8
+  let volleyLeft = 0
+  let volleyTimer = 0
+  let elapsed = 0
+  let last = performance.now() / 1000
+
+  function beginFade(s) {
+    s.frozen = s.age
+    s.fading = true
+    s.fadeAge = 0
+  }
+
+  function updateWind(time) {
+    wind.x = 0.9 * Math.sin(0.17 * time) + 0.25 * Math.sin(0.53 * time)
+    wind.y = 0
+    wind.z = 0.4 * Math.sin(0.13 * time + 1.2)
+  }
+
+  function step(dt) {
+    const aliveBefore = sparks.filter(s => s.alive)
+    aliveBefore.forEach(s => {
+      if (s.fading) {
+        s.fadeAge += dt
+        if (s.fadeAge >= s.fadeDur) s.alive = false
+        return
+      }
+      s.age += dt
+      if (s.kind === 'shell') {
+        s.emberAcc += dt
+        if (s.emberAcc > 0.045) {
+          s.emberAcc = 0
+          spawnEmber(s)
+        }
+        const v = vel(s, s.age)
+        if ((s.age > 1.15 && v.y < 2) || s.age >= s.life) {
+          s.age = Math.min(s.age, s.life)
+          explode(s)
+          beginFade(s)
+        }
+        return
+      }
+      if (s.nidan && !s.nidanDone && s.age > s.life * 0.46) {
+        s.nidanDone = true
+        spawnChildren(s, s.nidan)
+        s.life = s.age + 0.18
+      }
+      if (s.crackle > 0 && !s.crackleRolled && s.age > s.life * 0.2) {
+        s.crackleRolled = true
+        s.willCrackle = Math.random() < s.crackle
+      }
+      if (s.willCrackle && !s.splitDone && s.age > s.life * 0.72) {
+        s.splitDone = true
+        spawnChildren(s, {
+          count: 4,
+          speed: 3.2,
+          friction: 2.1,
+          life: 0.32,
+          color: [1, 0.72, 0.35],
+          radius: 0.16,
+          bright: 1.2,
+          hot: 1,
+          headSize: 1.5
+        })
+      }
+      if (s.age >= s.life) {
+        s.age = s.life
+        beginFade(s)
+      }
+    })
+  }
+
+  function upload(time) {
+    frameCamera()
+    const cam = camera.position
+    const world = camera.matrixWorld.elements
+    const rightX = world[0]
+    const rightY = world[1]
+    const rightZ = world[2]
+    const upX = world[4]
+    const upY = world[5]
+    const upZ = world[6]
+    const height = renderer.domElement.height || window.innerHeight
+    const focal = (height * 0.5) / Math.tan(THREE.MathUtils.degToRad(camera.fov * 0.5))
+    let verts = 0
+    let indices = 0
+    let heads = 0
+
+    function vert(x, y, z, r, g, b, side, along, shape) {
+      if (verts >= MAX_VERTS) return -1
+      const i = verts++
+      rPos[i * 3] = x
+      rPos[i * 3 + 1] = y
+      rPos[i * 3 + 2] = z
+      rCol[i * 3] = r
+      rCol[i * 3 + 1] = g
+      rCol[i * 3 + 2] = b
+      rSide[i] = side
+      rAlong[i] = along
+      rShape[i] = shape
+      return i
+    }
+
+    for (let n = 0; n < sparks.length; n++) {
+      const s = sparks[n]
+      if (!s.alive) continue
+      const shown = s.fading ? s.frozen : s.age
+      const lifeU = Math.min(1, shown / Math.max(s.life, 0.001))
+      const lifeFade = lifeU < 0.55 ? 1 : 1 - ((lifeU - 0.55) / 0.45) * 0.72
+      const fade = (s.fading ? Math.max(0, 1 - s.fadeAge / s.fadeDur) : 1) * lifeFade
+      if (fade <= 0.02) continue
+
+      if (s.kind === 'flash') {
+        if (verts + 4 > MAX_VERTS || indices + 6 > MAX_INDICES) continue
+        const p = at(s, shown)
+        const rad = s.radius * fade
+        const c0 = s.r * fade * 1.35
+        const c1 = s.g * fade * 1.15
+        const c2 = s.b * fade * 0.9
+        const a = vert(p.x - rightX * rad - upX * rad, p.y - rightY * rad - upY * rad, p.z - rightZ * rad - upZ * rad, c0, c1, c2, -1, -1, 1)
+        vert(p.x + rightX * rad - upX * rad, p.y + rightY * rad - upY * rad, p.z + rightZ * rad - upZ * rad, c0, c1, c2, 1, -1, 1)
+        vert(p.x - rightX * rad + upX * rad, p.y - rightY * rad + upY * rad, p.z - rightZ * rad + upZ * rad, c0, c1, c2, -1, 1, 1)
+        vert(p.x + rightX * rad + upX * rad, p.y + rightY * rad + upY * rad, p.z + rightZ * rad + upZ * rad, c0, c1, c2, 1, 1, 1)
+        rIndex[indices++] = a
+        rIndex[indices++] = a + 1
+        rIndex[indices++] = a + 2
+        rIndex[indices++] = a + 1
+        rIndex[indices++] = a + 3
+        rIndex[indices++] = a + 2
+        continue
+      }
+
+      if (s.ribbon && shown > 0.03 && verts + (SAMPLES + 1) * 2 <= MAX_VERTS && indices + SAMPLES * 6 <= MAX_INDICES) {
+        const hotK = s.hot * (1 - Math.min(1, lifeU / 0.22))
+        const cr = s.r * (1 - hotK) + hotK
+        const cg = s.g * (1 - hotK) + hotK * 0.94
+        const cb = s.b * (1 - hotK) + hotK * 0.75
+        const base = verts
+        let prevX = 0
+        let prevY = 0
+        let prevZ = 0
+        for (let i = 0; i <= SAMPLES; i++) {
+          const along = i / SAMPLES
+          const p = at(s, shown * along)
+          let tx
+          let ty
+          let tz
+          if (i < SAMPLES) {
+            const q = at(s, shown * (i + 1) / SAMPLES)
+            tx = q.x - p.x
+            ty = q.y - p.y
+            tz = q.z - p.z
+          } else {
+            tx = p.x - prevX
+            ty = p.y - prevY
+            tz = p.z - prevZ
+          }
+          prevX = p.x
+          prevY = p.y
+          prevZ = p.z
+          const toX = cam.x - p.x
+          const toY = cam.y - p.y
+          const toZ = cam.z - p.z
+          let sx = ty * toZ - tz * toY
+          let sy = tz * toX - tx * toZ
+          let sz = tx * toY - ty * toX
+          let sl = Math.hypot(sx, sy, sz)
+          if (sl < 1e-5) {
+            sx = rightX
+            sy = rightY
+            sz = rightZ
+            sl = 1
+          }
+          sx /= sl
+          sy /= sl
+          sz /= sl
+          const dist = Math.max(8, Math.hypot(toX, toY, toZ))
+          const pixels = (2.4 + s.radius * 8) * (0.28 + 0.72 * Math.pow(along, 0.55))
+          const half = dist * (pixels * 0.5) / focal
+          const tail = 0.12 + 0.88 * Math.min(1, along / 0.28)
+          const bright = s.bright * fade * tail
+          vert(p.x - sx * half, p.y - sy * half, p.z - sz * half, cr * bright, cg * bright, cb * bright, -1, along, 0)
+          vert(p.x + sx * half, p.y + sy * half, p.z + sz * half, cr * bright, cg * bright, cb * bright, 1, along, 0)
+        }
+        for (let i = 0; i < SAMPLES; i++) {
+          const a = base + i * 2
+          rIndex[indices++] = a
+          rIndex[indices++] = a + 1
+          rIndex[indices++] = a + 2
+          rIndex[indices++] = a + 1
+          rIndex[indices++] = a + 3
+          rIndex[indices++] = a + 2
+        }
+      }
+
+      if (s.head && heads < MAX) {
+        const p = at(s, shown)
+        const hot = s.hot * (lifeU < 0.2 ? 1 : 0.35)
+        headPos[heads * 3] = p.x
+        headPos[heads * 3 + 1] = p.y
+        headPos[heads * 3 + 2] = p.z
+        headColor[heads * 3] = Math.min(1.35, s.r + hot * 0.55) * fade
+        headColor[heads * 3 + 1] = Math.min(1.2, s.g + hot * 0.4) * fade
+        headColor[heads * 3 + 2] = Math.min(1.05, s.b + hot * 0.2) * fade
+        headSize[heads] = s.headSize * (0.65 + 0.35 * fade) * s.bright
+        headSeed[heads] = s.seed
+        heads++
+      }
+    }
+
+    ribbonGeo.setDrawRange(0, indices)
+    ribbonMesh.visible = indices > 0
+    ribbonGeo.getAttribute('position').needsUpdate = true
+    ribbonGeo.getAttribute('color').needsUpdate = true
+    ribbonGeo.getAttribute('side').needsUpdate = true
+    ribbonGeo.getAttribute('along').needsUpdate = true
+    ribbonGeo.getAttribute('shape').needsUpdate = true
+    ribbonGeo.getIndex().needsUpdate = true
+    headGeo.setDrawRange(0, heads)
+    headGeo.getAttribute('position').needsUpdate = true
+    headGeo.getAttribute('color').needsUpdate = true
+    headGeo.getAttribute('size').needsUpdate = true
+    headGeo.getAttribute('seed').needsUpdate = true
+    headMat.uniforms.uTime.value = time
+    skyMat.uniforms.flash.value = skyFlash
+  }
+
+  function advance(dt) {
+    elapsed += dt
+    updateWind(elapsed)
+    skyFlash = Math.max(0, skyFlash - dt * 0.55)
+
+    nextAuto -= dt
+    if (volleyLeft > 0) {
+      volleyTimer -= dt
+      if (volleyTimer <= 0) {
+        volleyLeft--
+        volleyTimer = 0.32
+        launch((Math.random() - 0.5) * 56, (Math.random() - 0.5) * 16)
+      }
+    }
+    if (nextAuto <= 0) {
+      const volley = Math.random() < 0.34
+      if (volley) {
+        volleyLeft += 2 + Math.floor(Math.random() * 2)
+        volleyTimer = 0.32
+        launch((Math.random() - 0.5) * 50, (Math.random() - 0.5) * 12)
+      } else {
+        launch((Math.random() - 0.5) * 48, (Math.random() - 0.5) * 16)
+      }
+      nextAuto = 1.7 + Math.random() * 1.6
+    }
+
+    step(dt)
+    upload(elapsed)
+  }
+
+  function frameCamera() {
+    const camX = pointerX * 14 + Math.sin(elapsed * 0.08) * 1.6
+    const camY = 16 + pointerY * -3
+    camera.position.set(camX, camY, 118)
+    camera.lookAt(camX * 0.2, 34, 0)
+    camera.updateMatrixWorld()
+  }
+
+  function animate() {
+    const now = performance.now() / 1000
+    const dt = Math.min(0.033, Math.max(0, now - last))
+    last = now
+    advance(dt)
+    frameCamera()
+    renderer.render(scene, camera)
+    requestAnimationFrame(animate)
+  }
+
+  launch(-18, -4, 0)
+  launch(16, 2, 4)
+
+  const previewSeconds = Number(new URLSearchParams(location.search).get('t') || 0)
+  if (previewSeconds > 0) {
+    const stepDt = 1 / 60
+    for (let t = 0; t < previewSeconds; t += stepDt) advance(stepDt)
+  }
+
+  animate()
+})()
+</script>
+</body>
+</html>
