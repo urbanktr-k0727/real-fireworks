@@ -547,6 +547,8 @@
     s.senrin = null
     s.senrinDone = false
     s.tint = false
+    s.tintHold = 0
+    s.tintFade = 0
     s.fadeInDur = 2.4
     return s
   }
@@ -1321,7 +1323,7 @@
     }
   }
 
-  function spawnSmokePuff(x, y, z, vx, vy, vz, life, radius, alpha, delay, tint, fadeInDur) {
+  function spawnSmokePuff(x, y, z, vx, vy, vz, life, radius, alpha, delay, tint, fadeInDur, tintHold) {
     const s = spawnSpark({
       x, y, z, vx, vy, vz,
       friction: 0.28,
@@ -1343,6 +1345,8 @@
       s.tintR = tint ? tint[0] : 0
       s.tintG = tint ? tint[1] : 0
       s.tintB = tint ? tint[2] : 0
+      s.tintHold = tintHold == null ? 0 : tintHold
+      s.tintFade = tintHold == null ? 0 : 1
     }
     return s
   }
@@ -2002,7 +2006,8 @@
             0.22,
             0.02,
             [s.r, s.g, s.b],
-            0.4
+            0.4,
+            0.35
           )
         }
         if (s.age >= s.life || (s.age > 0.45 && sp < 8)) {
@@ -2288,10 +2293,14 @@
       let hueB = s.b
       let hueW = 0.25
       if (s.tint) {
-        hueR = s.tintR
-        hueG = s.tintG
-        hueB = s.tintB
-        hueW = 1.8
+        let tintK = 1
+        if (s.tintFade > 0 && shown > s.tintHold) {
+          tintK = Math.max(0, 1 - (shown - s.tintHold) / s.tintFade)
+        }
+        hueR = s.tintR * tintK + s.r * (1 - tintK)
+        hueG = s.tintG * tintK + s.g * (1 - tintK)
+        hueB = s.tintB * tintK + s.b * (1 - tintK)
+        hueW = 1.8 * tintK + 0.25 * (1 - tintK)
       } else {
         hueR = ambColR * ambMix + s.r * 0.25
         hueG = ambColG * ambMix + s.g * 0.25
