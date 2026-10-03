@@ -109,7 +109,7 @@
  * https://github.com/tompng/senkouhanabi_gl
  */
 (function () {
-  const MAX = 8192
+  const MAX = 32768
   const GRAVITY = -9.8
 
   function coreRecipe(gauge, count) {
@@ -490,10 +490,16 @@
   }
 
   const sparks = Array.from({ length: MAX }, () => ({ alive: false }))
+  let sparkCursor = 0
 
   function alloc(kind) {
-    for (let i = 0; i < sparks.length; i++) {
-      if (!sparks[i].alive) return resetSpark(sparks[i])
+    const n = sparks.length
+    for (let k = 0; k < n; k++) {
+      const i = (sparkCursor + k) % n
+      if (!sparks[i].alive) {
+        sparkCursor = (i + 1) % n
+        return resetSpark(sparks[i])
+      }
     }
     if (kind !== 'flash') return null
     let best = null
@@ -1556,7 +1562,8 @@
   ground.position.y = -0.08
   scene.add(ground)
 
-  const SMOKE_MAX = 4000
+  // 1つの煙は頂点4つ。インデックスは16bitなので、16384が描ける上限。
+  const SMOKE_MAX = 16384
   const smokePos = new Float32Array(SMOKE_MAX * 4 * 3)
   const smokeCol = new Float32Array(SMOKE_MAX * 4 * 4)
   const smokeQuad = new Float32Array(SMOKE_MAX * 4 * 2)
