@@ -109,7 +109,7 @@
  * https://github.com/tompng/senkouhanabi_gl
  */
 (function () {
-  const MAX = 32768
+  const MAX = 16384
   const GRAVITY = -9.8
 
   function coreRecipe(gauge, count) {
@@ -1563,7 +1563,7 @@
   scene.add(ground)
 
   // 1つの煙は頂点4つ。インデックスは16bitなので、16384が描ける上限。
-  const SMOKE_MAX = 16384
+  const SMOKE_MAX = 8192
   const smokePos = new Float32Array(SMOKE_MAX * 4 * 3)
   const smokeCol = new Float32Array(SMOKE_MAX * 4 * 4)
   const smokeQuad = new Float32Array(SMOKE_MAX * 4 * 2)
