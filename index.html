@@ -1986,7 +1986,7 @@
         s.smokeAcc += dt
         if (s.smokeAcc > 0.88) {
           s.smokeAcc = 0
-          if (Math.random() < 1 / 3) {
+          if (Math.random() < 2 / 9) {
             const p = at(s, s.age)
             spawnSmokePuff(
               p.x, p.y, p.z,
