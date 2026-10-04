@@ -88,6 +88,11 @@
 </head>
 <body>
 <div id="bar">
+  <select id="camera-mode" aria-label="視点">
+    <option value="stand">定点</option>
+    <option value="drone">ドローン</option>
+    <option value="heli">ヘリ</option>
+  </select>
   <button id="auto-toggle" type="button">自動停止</button>
   <button id="sound-toggle" type="button">ミュート解除</button>
   <input id="volume" type="range" min="0" max="100" value="70" aria-label="音量">
@@ -1740,6 +1745,27 @@
     pointerX = (event.clientX / window.innerWidth) * 2 - 1
     pointerY = (event.clientY / window.innerHeight) * 2 - 1
   })
+  let camMode = 'stand'
+  const keys = new Set()
+  window.addEventListener('keydown', event => {
+    if (event.target.closest('select, input, button')) return
+    keys.add(event.key.toLowerCase())
+    if (camMode === 'drone' && 'wasdqerfzx'.includes(event.key.toLowerCase())) event.preventDefault()
+  })
+  window.addEventListener('keyup', event => {
+    keys.delete(event.key.toLowerCase())
+  })
+  window.addEventListener('blur', () => keys.clear())
+  const camLook = new THREE.Vector3()
+  const drone = { x: 0, z: 480, yaw: 0, pitch: 0.28, zoom: 0.42 }
+  const heli = {
+    angle: 0,
+    look: 280,
+    fov: 48,
+    goalLook: 280,
+    goalFov: 48,
+    next: 6
+  }
   let autoOn = true
   const autoBtn = document.getElementById('auto-toggle')
   const manual = document.getElementById('manual')
@@ -1753,14 +1779,30 @@
       option.textContent = recipe.name + ' ' + GAUGES[recipe.gauge].label
       recipeSelect.appendChild(option)
     })
+  function updateHint() {
+    if (camMode === 'drone') {
+      hint.textContent = 'WASDで移動、QEで左右、RFで上下、Zで寄り、Xで引き'
+      return
+    }
+    if (camMode === 'heli') {
+      hint.textContent = 'ヘリで周回しています。マウスの上下で視線を変えられます'
+      return
+    }
+    hint.textContent = autoOn
+      ? 'マウスで向きを変えます。画面をクリックすると、その位置から打ち上がります'
+      : 'マウスで向きを変えます。種類を選んで打ち上げるか、画面をクリックします'
+  }
   function setAuto(on) {
     autoOn = on
     autoBtn.textContent = on ? '自動停止' : '自動開始'
     manual.classList.toggle('on', !on)
-    hint.textContent = on
-      ? '画面をクリックすると、その位置から打ち上がります'
-      : '種類を選んで打ち上げるか、画面をクリックします'
+    updateHint()
   }
+  document.getElementById('camera-mode').addEventListener('change', event => {
+    camMode = event.target.value
+    updateHint()
+  })
+  updateHint()
   const soundBtn = document.getElementById('sound-toggle')
   const volumeInput = document.getElementById('volume')
   function volumeFromSlider(value) {
@@ -2020,7 +2062,6 @@
   }
 
   function upload(time) {
-    frameCamera()
     const cam = camera.position
     const world = camera.matrixWorld.elements
     const rightX = world[0]
@@ -2445,18 +2486,85 @@
     upload(elapsed)
   }
 
-  function frameCamera() {
-    const pan = Math.tan(15 * Math.PI / 180)
-    const camX = pointerX * VIEW.distance * pan + Math.sin(elapsed * 0.08) * 1.2
-    const camY = VIEW.eye
-    const baseElev = Math.atan((VIEW.lookY - VIEW.eye) / VIEW.distance)
-    const maxElev = 40 * Math.PI / 180
-    const minElev = 12 * Math.PI / 180
-    const tilt = -pointerY * 22 * Math.PI / 180
-    const elev = Math.min(maxElev, Math.max(minElev, baseElev + tilt))
-    const lookY = camY + Math.tan(elev) * VIEW.distance
-    camera.position.set(camX, camY, VIEW.distance)
-    camera.lookAt(camX * 0.12, lookY, 0)
+  function frameCamera(dt) {
+    camera.up.set(0, 1, 0)
+    if (camMode === 'drone') {
+      const step = Math.min(0.05, Math.max(0, dt || 0))
+      const move = 72 * step
+      if (keys.has('q')) drone.yaw -= 0.85 * step
+      if (keys.has('e')) drone.yaw += 0.85 * step
+      if (keys.has('r')) drone.pitch += 0.55 * step
+      if (keys.has('f')) drone.pitch -= 0.55 * step
+      drone.pitch = Math.min(1.05, Math.max(-0.35, drone.pitch))
+      if (keys.has('w')) {
+        drone.x += Math.sin(drone.yaw) * move
+        drone.z -= Math.cos(drone.yaw) * move
+      }
+      if (keys.has('s')) {
+        drone.x -= Math.sin(drone.yaw) * move
+        drone.z += Math.cos(drone.yaw) * move
+      }
+      if (keys.has('a')) {
+        drone.x -= Math.cos(drone.yaw) * move
+        drone.z -= Math.sin(drone.yaw) * move
+      }
+      if (keys.has('d')) {
+        drone.x += Math.cos(drone.yaw) * move
+        drone.z += Math.sin(drone.yaw) * move
+      }
+      drone.x = Math.min(2200, Math.max(-2200, drone.x))
+      drone.z = Math.min(2200, Math.max(-2200, drone.z))
+      if (keys.has('z')) drone.zoom = Math.min(1, drone.zoom + 0.32 * step)
+      if (keys.has('x')) drone.zoom = Math.max(0, drone.zoom - 0.32 * step)
+      const y = 16 + (1 - drone.zoom) * 430
+      camera.fov = 20 + (1 - drone.zoom) * 54
+      camera.position.set(drone.x, y, drone.z)
+      const cp = Math.cos(drone.pitch)
+      camLook.set(
+        drone.x + Math.sin(drone.yaw) * cp,
+        y + Math.sin(drone.pitch),
+        drone.z - Math.cos(drone.yaw) * cp
+      )
+      camera.lookAt(camLook)
+    } else if (camMode === 'heli') {
+      const step = Math.min(0.05, Math.max(0, dt || 0))
+      heli.angle += step * (Math.PI * 2 / 88)
+      if (elapsed >= heli.next) {
+        heli.goalLook = 40 + Math.random() * 560
+        heli.goalFov = 24 + Math.random() * 46
+        heli.next = elapsed + 7 + Math.random() * 9
+      }
+      heli.look += (heli.goalLook - heli.look) * Math.min(1, step * 0.45)
+      heli.fov += (heli.goalFov - heli.fov) * Math.min(1, step * 0.55)
+      const radius = 800
+      const x = Math.sin(heli.angle) * radius
+      const z = Math.cos(heli.angle) * radius
+      const lookY = heli.look + (-pointerY) * 160
+      const shakeX = Math.sin(elapsed * 1.7) * 22 + Math.sin(elapsed * 4.4) * 7
+      const shakeZ = Math.cos(elapsed * 1.45) * 16 + Math.cos(elapsed * 3.6) * 5
+      const shakeY = Math.sin(elapsed * 2.2) * 9
+      camera.fov = heli.fov
+      camera.position.set(x, 800, z)
+      camLook.set(shakeX, lookY + shakeY, shakeZ)
+      camera.lookAt(camLook)
+      camera.rotateZ(Math.sin(elapsed * 1.35) * 0.012 + Math.sin(elapsed * 3.1) * 0.004)
+    } else {
+      const baseElev = Math.atan((VIEW.lookY - VIEW.eye) / VIEW.distance)
+      const maxElev = 40 * Math.PI / 180
+      const minElev = 12 * Math.PI / 180
+      const elev = Math.min(maxElev, Math.max(minElev, baseElev - pointerY * 22 * Math.PI / 180))
+      const yaw = pointerX * 34 * Math.PI / 180
+      const cp = Math.cos(elev)
+      camera.fov = VIEW.fov
+      camera.position.set(0, VIEW.eye, VIEW.distance)
+      camLook.set(
+        Math.sin(yaw) * cp,
+        VIEW.eye + Math.sin(elev),
+        VIEW.distance - Math.cos(yaw) * cp
+      )
+      camera.lookAt(camLook)
+    }
+    camera.updateProjectionMatrix()
     camera.updateMatrixWorld()
   }
 
@@ -2464,8 +2572,8 @@
     const now = performance.now() / 1000
     const dt = Math.min(0.033, Math.max(0, now - last))
     last = now
+    frameCamera(dt)
     advance(dt)
-    frameCamera()
     flushSounds()
     renderer.render(scene, camera)
     requestAnimationFrame(animate)
