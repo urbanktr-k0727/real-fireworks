@@ -1750,14 +1750,14 @@
   window.addEventListener('keydown', event => {
     if (event.target.closest('select, input, button')) return
     keys.add(event.key.toLowerCase())
-    if (camMode === 'drone' && 'wasdqerfzx'.includes(event.key.toLowerCase())) event.preventDefault()
+    if (camMode === 'drone' && 'wasdqerftgzx'.includes(event.key.toLowerCase())) event.preventDefault()
   })
   window.addEventListener('keyup', event => {
     keys.delete(event.key.toLowerCase())
   })
   window.addEventListener('blur', () => keys.clear())
   const camLook = new THREE.Vector3()
-  const drone = { x: 0, z: 480, yaw: 0, pitch: 0.28, zoom: 0.42 }
+  const drone = { x: 0, y: 80, z: 480, yaw: 0, pitch: 0.28, zoom: 0.42 }
   const heli = {
     angle: 0,
     look: 280,
@@ -1781,7 +1781,7 @@
     })
   function updateHint() {
     if (camMode === 'drone') {
-      hint.textContent = 'WASDで移動、QEで左右、RFで上下、Zで寄り、Xで引き'
+      hint.textContent = 'WASDで移動、TGで高度、QEで左右、RFで上下、Zで寄り、Xで引き'
       return
     }
     if (camMode === 'heli') {
@@ -2512,23 +2512,25 @@
         drone.x += Math.cos(drone.yaw) * move
         drone.z += Math.sin(drone.yaw) * move
       }
+      if (keys.has('t')) drone.y += 48 * step
+      if (keys.has('g')) drone.y -= 48 * step
+      drone.y = Math.min(900, Math.max(8, drone.y))
       drone.x = Math.min(2200, Math.max(-2200, drone.x))
       drone.z = Math.min(2200, Math.max(-2200, drone.z))
       if (keys.has('z')) drone.zoom = Math.min(1, drone.zoom + 0.32 * step)
       if (keys.has('x')) drone.zoom = Math.max(0, drone.zoom - 0.32 * step)
-      const y = 16 + (1 - drone.zoom) * 430
       camera.fov = 20 + (1 - drone.zoom) * 54
-      camera.position.set(drone.x, y, drone.z)
+      camera.position.set(drone.x, drone.y, drone.z)
       const cp = Math.cos(drone.pitch)
       camLook.set(
         drone.x + Math.sin(drone.yaw) * cp,
-        y + Math.sin(drone.pitch),
+        drone.y + Math.sin(drone.pitch),
         drone.z - Math.cos(drone.yaw) * cp
       )
       camera.lookAt(camLook)
     } else if (camMode === 'heli') {
       const step = Math.min(0.05, Math.max(0, dt || 0))
-      heli.angle += step * (Math.PI * 2 / 88)
+      heli.angle += step * (Math.PI * 2 / 220)
       if (elapsed >= heli.next) {
         heli.goalLook = 40 + Math.random() * 560
         heli.goalFov = 24 + Math.random() * 46
@@ -2536,7 +2538,7 @@
       }
       heli.look += (heli.goalLook - heli.look) * Math.min(1, step * 0.45)
       heli.fov += (heli.goalFov - heli.fov) * Math.min(1, step * 0.55)
-      const radius = 800
+      const radius = 2000
       const x = Math.sin(heli.angle) * radius
       const z = Math.cos(heli.angle) * radius
       const lookY = heli.look + (-pointerY) * 160
