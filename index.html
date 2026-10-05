@@ -1785,7 +1785,7 @@
       return
     }
     if (camMode === 'heli') {
-      hint.textContent = 'ヘリで周回しています。マウスの上下で視線を変えられます'
+      hint.textContent = 'ヘリで周回しています。視線とズームは自動で変わります'
       return
     }
     hint.textContent = autoOn
@@ -2532,7 +2532,7 @@
       const step = Math.min(0.05, Math.max(0, dt || 0))
       heli.angle += step * (Math.PI * 2 / 220)
       if (elapsed >= heli.next) {
-        heli.goalLook = 40 + Math.random() * 560
+        heli.goalLook = 20 + Math.random() * 1300
         heli.goalFov = 24 + Math.random() * 46
         heli.next = elapsed + 7 + Math.random() * 9
       }
@@ -2541,7 +2541,7 @@
       const radius = 2000
       const x = Math.sin(heli.angle) * radius
       const z = Math.cos(heli.angle) * radius
-      const lookY = heli.look + (-pointerY) * 160
+      const lookY = heli.look
       const shakeX = Math.sin(elapsed * 1.7) * 22 + Math.sin(elapsed * 4.4) * 7
       const shakeZ = Math.cos(elapsed * 1.45) * 16 + Math.cos(elapsed * 3.6) * 5
       const shakeY = Math.sin(elapsed * 2.2) * 9
