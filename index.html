@@ -1269,6 +1269,21 @@
     return true
   }
 
+  function soundPan(dx, dy, dz, dist, remain) {
+    if (camMode === 'heli') {
+      const angle = heli.angle + Math.max(0, remain) * (Math.PI * 2 / 220)
+      const s = Math.sin(angle)
+      const c = Math.cos(angle)
+      const vx = dx + camera.position.x - s * 2000
+      const vz = dz + camera.position.z - c * 2000
+      const vy = dy
+      const vdist = Math.max(1, Math.hypot(vx, vy, vz))
+      return (vx * c + vz * -s) / vdist
+    }
+    const e = camera.matrixWorld.elements
+    return (dx * e[0] + dy * e[1] + dz * e[2]) / dist
+  }
+
   function flushSounds() {
     if (!soundOn || !audioCtx || audioCtx.state !== 'running' || !camera) return
     const now = performance.now() / 1000
@@ -1286,7 +1301,7 @@
       }
       if (!clipsReady) continue
       try {
-        if (playSound(s, Math.max(0, remain), dist, dx / dist) !== false) soundQueue.splice(i, 1)
+        if (playSound(s, Math.max(0, remain), dist, soundPan(dx, dy, dz, dist, remain)) !== false) soundQueue.splice(i, 1)
       } catch (err) {
         soundQueue.splice(i, 1)
       }
