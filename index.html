@@ -2388,8 +2388,8 @@
         const dy = p.y - L.y
         const dz = p.z - L.z
         const dist2 = dx * dx + dy * dy + dz * dz
-        if (dist2 > 120 * 120) continue
-        const gain = L.w / (4 + dist2 * 0.003)
+        if (dist2 > 240 * 240) continue
+        const gain = L.w / (4 + dist2 * 0.00075)
         if (gain < 0.12) continue
         hueR += L.r * gain
         hueG += L.g * gain
