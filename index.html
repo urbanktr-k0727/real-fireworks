@@ -913,7 +913,7 @@
     const orient = recipe.layers.some(layer => layer.shape === 'ring' || layer.shape === 'fan') ? randomFrame() : null
     recipe.layers.forEach(layer => burstLayer(p.x, p.y, p.z, v.x, v.y, v.z, layer, orient))
     if (!senrin) spawnBurstSmoke(p.x, p.y, p.z, bloom)
-    queueSound(p.x, p.y, p.z, 'bloom', bloom, bloomClip(recipe))
+    queueSound(p.x, p.y, p.z, 'bloom', bloom * 2, bloomClip(recipe))
     const gauge = GAUGES[recipe.gauge]
     if (autoOn && gauge && gauge.height >= 250 && fanCooldown <= 0 && !fanQueue && Math.random() < 0.62) {
       launchSparkFan()
@@ -1015,7 +1015,7 @@
       shell.sparkStopY = Math.max(12, burstY * risingSparkFraction(recipeObj))
     }
     const longTail = recipeObj.layers.some(layer => (layer.trail || 0) >= 1.2)
-    queueSound(x, 0.4, z, 'launch', gauge.height, longTail ? 'tail' : 'launch')
+    queueSound(x, 0.4, z, 'launch', gauge.diameter, longTail ? 'tail' : 'launch')
   }
 
   const SOUND_SPEED = 340
@@ -1212,7 +1212,8 @@
     const when = ctx.currentTime + remain + Math.random() * 0.04
     const size = s.size
     const kindGain = s.kind === 'launch' ? 0.48 : s.kind === 'bloom' ? 1 : 0.7
-    const vol = Math.min(1.15, (480 / Math.max(40, dist)) * kindGain)
+    const sizeGain = s.kind === 'mine' ? 1 : Math.sqrt(Math.max(40, s.size) / 280)
+    const vol = Math.min(1.15, (480 / Math.max(40, dist)) * kindGain) * sizeGain
     const panner = ctx.createStereoPanner()
     panner.pan.setValueAtTime(Math.max(-1, Math.min(1, pan)), when)
     const dry = ctx.createGain()
