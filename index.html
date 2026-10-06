@@ -1028,7 +1028,7 @@
 
   function outdoorImpulse(ctx) {
     const rate = ctx.sampleRate
-    const length = Math.floor(rate * 2.6)
+    const length = Math.floor(rate * 6.8)
     const buffer = ctx.createBuffer(2, length, rate)
     const left = buffer.getChannelData(0)
     const right = buffer.getChannelData(1)
@@ -1057,8 +1057,11 @@
     let lpL = 0
     let lpR = 0
     const tailStart = Math.floor(0.18 * rate)
+    const fadeFrom = length - Math.floor(0.7 * rate)
     for (let i = tailStart; i < length; i++) {
-      const env = Math.exp(-((i / rate) - 0.18) * 1.15) * 0.055
+      const t = i / rate
+      let env = Math.exp(-(t - 0.18) * 0.42) * 0.055
+      if (i > fadeFrom) env *= (length - i) / Math.max(1, length - fadeFrom)
       lpL = lpL * 0.965 + (Math.random() * 2 - 1) * 0.035
       lpR = lpR * 0.965 + (Math.random() * 2 - 1) * 0.035
       left[i] += lpL * env
