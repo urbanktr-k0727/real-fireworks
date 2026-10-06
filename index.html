@@ -435,10 +435,10 @@
   }
 
   // 4号・5号（直径150mまで）は今の開花時間のまま。
-  // 10号は約3秒で開き切る、という公開されている目安に合わせ、それ以上は直径に比例して遅くする。
+  // 10号は約2.4秒、40号は約6.4秒で開き切る。大きいほど遅いが、以前より少し早い。
   function openSeconds(diameter) {
     if (diameter <= 150) return null
-    return 1.15 + (diameter - 150) * (3 - 1.15) / (280 - 150)
+    return 1.15 + (diameter - 150) * (2.4 - 1.15) / (280 - 150)
   }
 
   function stretchOpen(layer, diameter) {
@@ -913,27 +913,28 @@
     const p = at(shell, age)
     const v = vel(shell, age)
     const recipe = RECIPES[shell.recipe]
+    const gauge = GAUGES[recipe.gauge]
     const shaped = recipe.layers.some(layer => layer.shape === 'pattern')
     const senrin = recipe.layers.some(layer => layer.shape === 'senrin')
-    const flashK = shaped ? 0.62 : 1
+    const flarePower = Math.pow(Math.max(40, gauge.diameter) / 280, 0.85)
+    const flashK = (shaped ? 0.62 : 1) * flarePower
     const flare = senrin ? 2.6 : 1
     const bloom = recipe.bloomRadius || 40
     spawnSpark({
       x: p.x, y: p.y, z: p.z, vx: v.x, vy: v.y, vz: v.z,
-      friction: 0.2, life: 0.06 * flare, color: [1, 0.98, 0.94], radius: bloom * 0.42 * flashK, bright: 1.6,
-      hot: 1, kind: 'flash', ribbon: false, head: false, fadeDur: 0.1 * flare
+      friction: 0.2, life: 0.06 * flare * (0.8 + 0.35 * flarePower), color: [1, 0.98, 0.94], radius: bloom * 0.42 * flashK, bright: 1.55 * flarePower,
+      hot: 1, kind: 'flash', ribbon: false, head: false, fadeDur: 0.1 * flare * (0.85 + 0.3 * flarePower)
     })
     spawnSpark({
       x: p.x, y: p.y, z: p.z, vx: v.x, vy: v.y, vz: v.z,
-      friction: 0.15, life: 0.1 * flare, color: recipe.flash, radius: bloom * 0.9 * flashK, bright: shaped ? 0.7 : 1.15,
-      hot: 1, kind: 'flash', ribbon: false, head: false, fadeDur: 0.17 * flare
+      friction: 0.15, life: 0.1 * flare * (0.8 + 0.35 * flarePower), color: recipe.flash, radius: bloom * 0.9 * flashK, bright: (shaped ? 0.7 : 1.15) * flarePower,
+      hot: 1, kind: 'flash', ribbon: false, head: false, fadeDur: 0.17 * flare * (0.85 + 0.3 * flarePower)
     })
-    skyFlash = Math.min(1.2, skyFlash + 0.9)
+    skyFlash = Math.min(2.8, skyFlash + 0.85 * flarePower)
     const orient = recipe.layers.some(layer => layer.shape === 'ring' || layer.shape === 'fan') ? randomFrame() : null
     recipe.layers.forEach(layer => burstLayer(p.x, p.y, p.z, v.x, v.y, v.z, layer, orient))
     if (!senrin) spawnBurstSmoke(p.x, p.y, p.z, bloom)
     queueSound(p.x, p.y, p.z, 'bloom', bloom * 2, bloomClip(recipe))
-    const gauge = GAUGES[recipe.gauge]
     if (autoOn && gauge && gauge.height >= 250 && fanCooldown <= 0 && !fanQueue && Math.random() < 0.62) {
       launchSparkFan()
     }
