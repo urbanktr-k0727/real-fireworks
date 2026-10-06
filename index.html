@@ -1323,6 +1323,7 @@
         continue
       }
       if (!clipsReady) continue
+      if (camMode === 'drone' && remain > 0.03) continue
       try {
         if (playSound(s, Math.max(0, remain), dist, soundPan(dx, dy, dz, dist, remain)) !== false) soundQueue.splice(i, 1)
       } catch (err) {
